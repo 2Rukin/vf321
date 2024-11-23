@@ -1,0 +1,266 @@
+import com.querydsl.core.types.OrderSpecifier;
+import com.querydsl.core.types.Predicate;
+import org.junit.jupiter.api.Test;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.jpa.domain.Specification;
+
+import java.io.Serializable;
+import java.util.List;
+import java.util.Optional;
+import java.util.function.Function;
+import java.util.function.Supplier;
+
+import static org.junit.jupiter.api.Assertions.*;
+
+public abstract class BaseRepositoryWithQuerydslIT<E, K extends Serializable, R extends BaseReadOnlyRepository<E, K> & QuerydslPredicateExecutor<E>> {
+
+    protected R repository;
+
+    // Поставщики данных для тестов
+    protected Supplier<K> idSupplier;
+    protected Supplier<Predicate> predicateSupplier;
+    protected Supplier<Specification<E>> specificationSupplier;
+    protected Supplier<Sort> sortSupplier;
+    protected Supplier<Pageable> pageableSupplier;
+    protected Supplier<List<K>> idsSupplier;
+    protected Supplier<OrderSpecifier<?>[]> orderSpecifiersSupplier;
+
+    /**
+     * Инициализация базового теста.
+     */
+    protected void init(
+            R repository,
+            Supplier<K> idSupplier,
+            Supplier<Predicate> predicateSupplier,
+            Supplier<Specification<E>> specificationSupplier,
+            Supplier<Sort> sortSupplier,
+            Supplier<Pageable> pageableSupplier,
+            Supplier<List<K>> idsSupplier,
+            Supplier<OrderSpecifier<?>[]> orderSpecifiersSupplier
+    ) {
+        this.repository = repository;
+        this.idSupplier = idSupplier;
+        this.predicateSupplier = predicateSupplier;
+        this.specificationSupplier = specificationSupplier;
+        this.sortSupplier = sortSupplier;
+        this.pageableSupplier = pageableSupplier;
+        this.idsSupplier = idsSupplier;
+        this.orderSpecifiersSupplier = orderSpecifiersSupplier;
+    }
+
+    // Тесты для методов BaseReadOnlyRepository
+
+    /**
+     * @see BaseReadOnlyRepository#findById(Object)
+     */
+    @Test
+    void whenFindById_thenReturnEntity() {
+        K id = idSupplier.get();
+        Optional<E> entity = repository.findById(id);
+        assertTrue(entity.isPresent(), "Сущность должна существовать для указанного ID");
+    }
+
+    /**
+     * @see BaseReadOnlyRepository#existsById(Object)
+     */
+    @Test
+    void whenExistsById_thenReturnTrue() {
+        K id = idSupplier.get();
+        boolean exists = repository.existsById(id);
+        assertTrue(exists, "Сущность с указанным ID должна существовать");
+    }
+
+    /**
+     * @see BaseReadOnlyRepository#getReferenceById(Object)
+     */
+    @Test
+    void whenGetReferenceById_thenReturnEntity() {
+        K id = idSupplier.get();
+        E entity = repository.getReferenceById(id);
+        assertNotNull(entity, "Ссылка на сущность не должна быть null");
+    }
+
+    /**
+     * @see BaseReadOnlyRepository#count()
+     */
+    @Test
+    void whenCount_thenReturnTotalNumberOfEntities() {
+        long count = repository.count();
+        assertTrue(count > 0, "Количество сущностей должно быть больше 0");
+    }
+
+    /**
+     * @see BaseReadOnlyRepository#count(Specification)
+     */
+    @Test
+    void whenCount_WithSpecification_thenReturnTotalNumberOfEntities() {
+        Specification<E> spec = specificationSupplier.get();
+        long count = repository.count(spec);
+        assertTrue(count > 0, "Количество сущностей должно быть больше 0");
+    }
+
+    /**
+     * @see BaseReadOnlyRepository#exists(Specification)
+     */
+    @Test
+    void whenExists_WithSpecification_thenReturnTrue() {
+        Specification<E> spec = specificationSupplier.get();
+        boolean exists = repository.exists(spec);
+        assertTrue(exists, "Сущности должны существовать по спецификации");
+    }
+
+    /**
+     * @see BaseReadOnlyRepository#findAll()
+     */
+    @Test
+    void whenFindAll_thenReturnEntities() {
+        List<E> entities = repository.findAll();
+        assertNotNull(entities, "Список сущностей не должен быть null");
+        assertFalse(entities.isEmpty(), "Список сущностей не должен быть пустым");
+    }
+
+    /**
+     * @see BaseReadOnlyRepository#findAll(Pageable)
+     */
+    @Test
+    void whenFindAll_WithPagination_thenReturnPaginatedEntities() {
+        Pageable pageable = pageableSupplier.get();
+        Page<E> page = repository.findAll(pageable);
+        assertNotNull(page, "Результат постраничного запроса не должен быть null");
+        assertFalse(page.isEmpty(), "Результат постраничного запроса не должен быть пустым");
+    }
+
+    /**
+     * @see BaseReadOnlyRepository#findAll(Sort)
+     */
+    @Test
+    void whenFindAll_WithSort_thenReturnSortedEntities() {
+        Sort sort = sortSupplier.get();
+        List<E> entities = repository.findAll(sort);
+        assertNotNull(entities, "Список отсортированных сущностей не должен быть null");
+        assertFalse(entities.isEmpty(), "Список сущностей не должен быть пустым");
+    }
+
+    /**
+     * @see BaseReadOnlyRepository#findAllById(Iterable)
+     */
+    @Test
+    void whenFindAllByIds_thenReturnEntities() {
+        List<K> ids = idsSupplier.get();
+        List<E> entities = repository.findAllById(ids);
+        assertNotNull(entities, "Список сущностей не должен быть null");
+        assertEquals(ids.size(), entities.size(), "Количество найденных сущностей должно совпадать с запрашиваемыми ID");
+    }
+
+    // Тесты для методов QuerydslPredicateExecutor
+
+    /**
+     * @see QuerydslPredicateExecutor#findOne(Predicate)
+     */
+    @Test
+    void whenFindOne_WithPredicate_thenReturnEntity() {
+        Predicate predicate = predicateSupplier.get();
+        Optional<E> entity = repository.findOne(predicate);
+        assertTrue(entity.isPresent(), "Сущность должна быть найдена по предикату");
+    }
+
+    /**
+     * @see QuerydslPredicateExecutor#findAll(Predicate)
+     */
+    @Test
+    void whenFindAll_WithPredicate_thenReturnEntities() {
+        Predicate predicate = predicateSupplier.get();
+        Iterable<E> entities = repository.findAll(predicate);
+        assertNotNull(entities, "Список сущностей не должен быть null");
+        assertTrue(entities.iterator().hasNext(), "Список сущностей не должен быть пустым");
+    }
+
+    /**
+     * @see QuerydslPredicateExecutor#findAll(Predicate, Sort)
+     */
+    @Test
+    void whenFindAll_WithPredicateAndSort_thenReturnSortedEntities() {
+        Predicate predicate = predicateSupplier.get();
+        Sort sort = sortSupplier.get();
+        Iterable<E> entities = repository.findAll(predicate, sort);
+        assertNotNull(entities, "Список сущностей не должен быть null");
+        assertTrue(entities.iterator().hasNext(), "Список сущностей не должен быть пустым");
+    }
+
+    /**
+     * @see QuerydslPredicateExecutor#findAll(Predicate, Pageable)
+     */
+    @Test
+    void whenFindAll_WithPredicateAndPagination_thenReturnPaginatedEntities() {
+        Predicate predicate = predicateSupplier.get();
+        Pageable pageable = pageableSupplier.get();
+        Page<E> page = repository.findAll(predicate, pageable);
+        assertNotNull(page, "Результат постраничного запроса не должен быть null");
+        assertFalse(page.isEmpty(), "Результат постраничного запроса не должен быть пустым");
+    }
+
+    /**
+     * @see QuerydslPredicateExecutor#findAll(Predicate, OrderSpecifier[])
+     */
+    @Test
+    void whenFindAll_WithPredicateAndOrderSpecifiers_thenReturnOrderedEntities() {
+        Predicate predicate = predicateSupplier.get();
+        OrderSpecifier<?>[] orderSpecifiers = orderSpecifiersSupplier.get();
+        Iterable<E> entities = repository.findAll(predicate, orderSpecifiers);
+        assertNotNull(entities, "Список сущностей не должен быть null");
+        assertTrue(entities.iterator().hasNext(), "Список сущностей не должен быть пустым");
+    }
+
+    /**
+     * @see QuerydslPredicateExecutor#count(Predicate)
+     */
+    @Test
+    void whenCount_WithPredicate_thenReturnTotalNumberOfEntities() {
+        Predicate predicate = predicateSupplier.get();
+        long count = repository.count(predicate);
+        assertTrue(count > 0, "Количество сущностей должно быть больше 0");
+    }
+
+    /**
+     * @see QuerydslPredicateExecutor#exists(Predicate)
+     */
+    @Test
+    void whenExists_WithPredicate_thenReturnTrue() {
+        Predicate predicate = predicateSupplier.get();
+        boolean exists = repository.exists(predicate);
+        assertTrue(exists, "Сущности должны существовать по предикату");
+    }
+}
+public class PaymentAnalyticRepositoryCrudIT
+    extends BaseRepositoryWithQuerydslIT<PaymentAnalyticEntity, UUID, PaymentAnalyticRepository> {
+
+    @Autowired
+    public PaymentAnalyticRepositoryCrudIT(PaymentAnalyticRepository repository) {
+        init(
+            repository,
+            // ID для тестов
+            () -> UUID.fromString("fa08a04d-ba1c-46a9-a079-32de62004a4a"),
+            // Предикат для QueryDSL
+            () -> QPaymentAnalyticEntity.paymentAnalyticEntity.status.eq(PaymentAnalyticStatus.APPROVAL),
+            // Спецификация для JPA Criteria
+            () -> (root, query, criteriaBuilder) -> 
+                criteriaBuilder.equal(root.get("status"), PaymentAnalyticStatus.APPROVAL),
+            // Сортировка
+            () -> Sort.by(Sort.Order.asc("trancheIssueDate")),
+            // Пагинация
+            () -> PageRequest.of(0, 2),
+            // Список ID для findAllById
+            () -> List.of(
+                UUID.fromString("fa08a04d-ba1c-46a9-a079-32de62004a4a"),
+                UUID.fromString("793e2784-7d2d-44e9-a96e-3d965f1a5b86")
+            ),
+            // Спецификаторы порядка для QueryDSL
+            () -> new OrderSpecifier<?>[] {
+                QPaymentAnalyticEntity.paymentAnalyticEntity.trancheIssueDate.asc()
+            }
+        );
+    }
+}
+
