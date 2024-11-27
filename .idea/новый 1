@@ -45,7 +45,18 @@ import java.util.*;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.when;
+class PaymentAnalyticServiceTest {
 
+    @Mock
+    private PaymentAnalyticRepository paymentAnalyticRepository;
+
+    @InjectMocks
+    private PaymentAnalyticServiceImpl paymentAnalyticService;
+
+    @BeforeEach
+    void setUp() {
+        MockitoAnnotations.openMocks(this);
+    }
 @Transactional
 class PaymentAnalyticServiceTestIT extends SpringBootBaseIT {
 
