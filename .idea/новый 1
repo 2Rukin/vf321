@@ -1,262 +1,219 @@
-@Test
-void givenValidData_whenCountByStatus_thenReturnsCorrectCounts() {
-    // Дано
-    UUID clientId = UUID.fromString("123e4567-e89b-12d3-a456-426614174000");
-    Set<UUID> organizationIds = Set.of(UUID.fromString("123e4567-e89b-12d3-a456-426614174001"));
-
-    // Предполагается, что в базе данных есть платежи со следующими статусами для заданного clientId и organizationIds:
-    // - APPROVAL (не входит в nullCountStatuses)
-    // - DRAFT и REVOKED (входят в nullCountStatuses)
-    PaymentAnalyticStatus statusApproval = PaymentAnalyticStatus.APPROVAL;
-    PaymentAnalyticStatus statusDraft = PaymentAnalyticStatus.DRAFT;
-    PaymentAnalyticStatus statusRevoked = PaymentAnalyticStatus.REVOKED;
-
-    // Когда
-    List<StatusCountDto> result = paymentAnalyticService.countByStatus(clientId, organizationIds);
-
-    // Тогда
-    assertNotNull(result);
-
-    // Преобразуем результат в Map для удобства проверки
-    Map<String, Long> statusCountMap = result.stream()
-            .collect(Collectors.toMap(StatusCountDto::getStatus, StatusCountDto::getCount));
-
-    // Проверяем статус APPROVAL
-    assertTrue(statusCountMap.containsKey(statusApproval.name()), "Статус APPROVAL должен присутствовать в результате");
-    assertEquals(1L, statusCountMap.get(statusApproval.name()), "Количество для статуса APPROVAL должно быть 1");
-
-    // Проверяем статусы DRAFT и REVOKED, у которых count должен быть null
-    assertTrue(statusCountMap.containsKey(statusDraft.name()), "Статус DRAFT должен присутствовать в результате");
-    assertNull(statusCountMap.get(statusDraft.name()), "Количество для статуса DRAFT должно быть null");
-
-    assertTrue(statusCountMap.containsKey(statusRevoked.name()), "Статус REVOKED должен присутствовать в результате");
-    assertNull(statusCountMap.get(statusRevoked.name()), "Количество для статуса REVOKED должно быть null");
-}
-
-
-
-import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentMatchers;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.mock.mockito.MockBean;
-import org.springframework.transaction.annotation.Transactional;
+import static org.junit.jupiter.api.Assertions.*;
 
 import java.util.*;
+import java.util.stream.Stream;
 
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.Mockito.when;
-class PaymentAnalyticServiceTest {
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.*;
+import org.mockito.junit.jupiter.MockitoExtension;
 
-    @Mock
-    private PaymentAnalyticRepository paymentAnalyticRepository;
+@ExtendWith(MockitoExtension.class)
+public class SearchUtilsTest {
 
-    @InjectMocks
-    private PaymentAnalyticServiceImpl paymentAnalyticService;
+    private UUID clientId;
+    private UUID orgId1;
+    private UUID orgId2;
+    private String right;
 
     @BeforeEach
     void setUp() {
-        MockitoAnnotations.openMocks(this);
+        clientId = UUID.randomUUID();
+        orgId1 = UUID.randomUUID();
+        orgId2 = UUID.randomUUID();
+        right = "VIEW_REPORTS";
     }
-@Transactional
-class PaymentAnalyticServiceTestIT extends SpringBootBaseIT {
 
-    @Autowired
-    private PaymentAnalyticService paymentAnalyticService;
+    // Параметризованные тесты для findOrganizationIdByClientId
 
-    @MockBean
-    private PaymentAnalyticRepository paymentAnalyticRepository;
-
-    @Test
-    void givenStatusCountsFromRepository_whenCountByStatus_thenSetsNullCountsForSpecificStatuses() {
-        // Дано
+    static Stream<Arguments> findOrganizationIdByClientIdTestCases() {
         UUID clientId = UUID.randomUUID();
-        Set<UUID> organizationIds = Set.of(UUID.randomUUID());
+        UUID orgId1 = UUID.randomUUID();
 
-        // Мокируем данные, возвращаемые репозиторием
-        List<StatusCountDto> mockedData = Arrays.asList(
-                new StatusCountDto("APPROVAL", 5L),
-                new StatusCountDto("DRAFT", 3L),
-                new StatusCountDto("REVOKED", 2L),
-                new StatusCountDto("PROCESSING", 4L),
-                new StatusCountDto("REJECTED", 1L),
-                new StatusCountDto("EXECUTED", 6L)
+        // Создание ролей с использованием UserInfoTestDataWW
+        RoleScope matchingRole = UserInfoTestDataWW.createRoleScope(clientId, Arrays.asList("RIGHT1"));
+        RoleScope nonMatchingRole = UserInfoTestDataWW.createRoleScope(orgId1, Arrays.asList("RIGHT2"));
+        RoleScope nullOrganizationIdRole = UserInfoTestDataWW.createRoleScope(null, Arrays.asList("RIGHT3"));
+
+        // Создание UserInfo с различными ролями
+        UserInfo userWithNullRoles = UserInfoTestDataWW.getBaseUserInfo();
+        userWithNullRoles.setRoles(null);
+
+        UserInfo userWithEmptyRoles = UserInfoTestDataWW.createUserInfoWithRoles(Collections.emptyList());
+
+        UserInfo userWithMatchingRole = UserInfoTestDataWW.createUserInfoWithRoles(Arrays.asList(matchingRole));
+
+        UserInfo userWithNonMatchingRoles = UserInfoTestDataWW.createUserInfoWithRoles(Arrays.asList(nonMatchingRole));
+
+        UserInfo userWithNullOrganizationIdRole = UserInfoTestDataWW.createUserInfoWithRoles(Arrays.asList(nullOrganizationIdRole, matchingRole));
+
+        return Stream.of(
+                Arguments.of("clientId равен null", null, userWithMatchingRole, NullPointerException.class, null),
+                Arguments.of("userInfo равен null", clientId, null, NullPointerException.class, null),
+                Arguments.of("Роли пользователя равны null", clientId, userWithNullRoles, AccessDeniedException.class, "Неожиданно роли пользователя NULL. clientId: " + clientId),
+                Arguments.of("Роли пользователя пусты", clientId, userWithEmptyRoles, AccessDeniedException.class, "Неожиданно роли пользователя NULL. clientId: " + clientId),
+                Arguments.of("Есть роль с соответствующим clientId", clientId, userWithMatchingRole, null, clientId),
+                Arguments.of("Нет роли с соответствующим clientId", clientId, userWithNonMatchingRoles, RoleNotFoundException.class, "Не найдена роль где organizationId=clientId. clientId: " + clientId),
+                Arguments.of("Роль с null в organizationId игнорируется", clientId, userWithNullOrganizationIdRole, null, clientId)
         );
+    }
 
-        when(paymentAnalyticRepository.countByStatus(ArgumentMatchers.eq(clientId), ArgumentMatchers.eq(organizationIds)))
-                .thenReturn(mockedData);
-
-        // Когда
-        List<StatusCountDto> result = paymentAnalyticService.countByStatus(clientId, organizationIds);
-
-        // Тогда
-        assertNotNull(result);
-        assertEquals(mockedData.size(), result.size(), "Размер результата должен соответствовать размеру мокированных данных");
-
-        // Создаем набор статусов, для которых count должен быть null
-        Set<String> nullCountStatuses = Set.of("REJECTED", "EXECUTED", "DRAFT", "REVOKED");
-
-        // Проверяем результаты
-        for (StatusCountDto dto : result) {
-            if (nullCountStatuses.contains(dto.getStatus())) {
-                assertNull(dto.getCount(), "Count должен быть null для статуса " + dto.getStatus());
-            } else {
-                assertNotNull(dto.getCount(), "Count не должен быть null для статуса " + dto.getStatus());
-                // Дополнительно проверяем, что значение count соответствует ожидаемому
-                Optional<StatusCountDto> originalDto = mockedData.stream()
-                        .filter(d -> d.getStatus().equals(dto.getStatus()))
-                        .findFirst();
-                assertTrue(originalDto.isPresent(), "Оригинальный DTO должен присутствовать для статуса " + dto.getStatus());
-                assertEquals(originalDto.get().getCount(), dto.getCount(), "Count для статуса " + dto.getStatus() + " должен совпадать с оригинальным");
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("findOrganizationIdByClientIdTestCases")
+    void testFindOrganizationIdByClientId(String testName, UUID clientId, UserInfo userInfo, Class<? extends Exception> expectedException, Object expectedResult) {
+        if (expectedException != null) {
+            Exception exception = assertThrows(expectedException, () ->
+                    SearchUtils.findOrganizationIdByClientId(clientId, userInfo)
+            );
+            if (expectedResult != null && exception.getMessage() != null) {
+                assertEquals(expectedResult, exception.getMessage());
             }
+        } else {
+            UUID result = SearchUtils.findOrganizationIdByClientId(clientId, userInfo);
+            assertEquals(expectedResult, result);
         }
     }
 
-    @Test
-    void givenEmptyResultFromRepository_whenCountByStatus_thenReturnsEmptyList() {
-        // Дано
-        UUID clientId = UUID.randomUUID();
-        Set<UUID> organizationIds = Set.of(UUID.randomUUID());
+    // Параметризованные тесты для findAllOrganizationIdsWithRight
 
-        // Мокируем пустой результат от репозитория
-        when(paymentAnalyticRepository.countByStatus(ArgumentMatchers.eq(clientId), ArgumentMatchers.eq(organizationIds)))
-                .thenReturn(Collections.emptyList());
+    static Stream<Arguments> findAllOrganizationIdsWithRightTestCases() {
+        String right = "VIEW_REPORTS";
+        UUID orgId1 = UUID.randomUUID();
+        UUID orgId2 = UUID.randomUUID();
 
-        // Когда
-        List<StatusCountDto> result = paymentAnalyticService.countByStatus(clientId, organizationIds);
+        // Создание ролей с использованием UserInfoTestDataWW
+        RoleScope roleWithRight1 = UserInfoTestDataWW.createRoleScope(orgId1, Arrays.asList(right, "EDIT_DATA"));
+        RoleScope roleWithRight2 = UserInfoTestDataWW.createRoleScope(orgId2, Arrays.asList(right));
+        RoleScope roleWithoutRight = UserInfoTestDataWW.createRoleScope(UUID.randomUUID(), Arrays.asList("EDIT_DATA"));
+        RoleScope roleWithNullRights = UserInfoTestDataWW.createRoleScope(UUID.randomUUID(), null);
+        RoleScope roleWithNullOrganizationId = UserInfoTestDataWW.createRoleScope(null, Arrays.asList(right));
 
-        // Тогда
-        assertNotNull(result);
-        assertTrue(result.isEmpty(), "Результат должен быть пустым");
-    }
+        // Создание UserInfo с различными ролями
+        UserInfo userWithNullRoles = UserInfoTestDataWW.getBaseUserInfo();
+        userWithNullRoles.setRoles(null);
 
-    @Test
-    void givenNullCountStatusesOnly_whenCountByStatus_thenAllCountsAreNull() {
-        // Дано
-        UUID clientId = UUID.randomUUID();
-        Set<UUID> organizationIds = Set.of(UUID.randomUUID());
+        UserInfo userWithEmptyRoles = UserInfoTestDataWW.createUserInfoWithRoles(Collections.emptyList());
 
-        // Мокируем данные только с nullCountStatuses
-        List<StatusCountDto> mockedData = Arrays.asList(
-                new StatusCountDto("REJECTED", 1L),
-                new StatusCountDto("EXECUTED", 2L),
-                new StatusCountDto("DRAFT", 3L),
-                new StatusCountDto("REVOKED", 4L)
+        UserInfo userWithRolesHavingRights = UserInfoTestDataWW.createUserInfoWithRoles(Arrays.asList(roleWithRight1, roleWithRight2, roleWithoutRight));
+
+        UserInfo userWithNoRolesHavingRight = UserInfoTestDataWW.createUserInfoWithRoles(Arrays.asList(roleWithoutRight));
+
+        UserInfo userWithRolesHavingNullRights = UserInfoTestDataWW.createUserInfoWithRoles(Arrays.asList(roleWithNullRights, roleWithRight1));
+
+        UserInfo userWithRolesHavingNullOrganizationId = UserInfoTestDataWW.createUserInfoWithRoles(Arrays.asList(roleWithNullOrganizationId, roleWithRight1));
+
+        return Stream.of(
+                Arguments.of("userInfo равен null", null, right, NullPointerException.class, null),
+                Arguments.of("right равен null", userWithRolesHavingRights, null, NullPointerException.class, null),
+                Arguments.of("Роли пользователя равны null", userWithNullRoles, right, AccessDeniedException.class, "Неожиданно роли пользователя NULL. UserInfo: " + userWithNullRoles),
+                Arguments.of("Роли пользователя пусты", userWithEmptyRoles, right, AccessDeniedException.class, "Неожиданно роли пользователя NULL. UserInfo: " + userWithEmptyRoles),
+                Arguments.of("Есть роли с указанным правом", userWithRolesHavingRights, right, null, new HashSet<>(Arrays.asList(orgId1, orgId2))),
+                Arguments.of("Нет ролей с указанным правом", userWithNoRolesHavingRight, right, AccessDeniedException.class, "Не найдены организации с правом: " + right),
+                Arguments.of("Роли с null в rights игнорируются", userWithRolesHavingNullRights, right, null, new HashSet<>(Arrays.asList(orgId1))),
+                Arguments.of("Роли с null в organizationId игнорируются", userWithRolesHavingNullOrganizationId, right, null, new HashSet<>(Arrays.asList(orgId1)))
         );
-
-        when(paymentAnalyticRepository.countByStatus(ArgumentMatchers.eq(clientId), ArgumentMatchers.eq(organizationIds)))
-                .thenReturn(mockedData);
-
-        // Когда
-        List<StatusCountDto> result = paymentAnalyticService.countByStatus(clientId, organizationIds);
-
-        // Тогда
-        assertNotNull(result);
-        assertEquals(mockedData.size(), result.size(), "Размер результата должен соответствовать размеру мокированных данных");
-
-        // Проверяем, что для всех статусов count установлен в null
-        for (StatusCountDto dto : result) {
-            assertNull(dto.getCount(), "Count должен быть null для статуса " + dto.getStatus());
-        }
     }
 
-    @Test
-    void givenClientIdIsNull_whenCountByStatus_thenRepositoryCalledWithNullClientId() {
-        // Дано
-        UUID clientId = null;
-        Set<UUID> organizationIds = Set.of(UUID.randomUUID());
-
-        // Мокируем данные
-        List<StatusCountDto> mockedData = Collections.singletonList(
-                new StatusCountDto("APPROVAL", 5L)
-        );
-
-        when(paymentAnalyticRepository.countByStatus(ArgumentMatchers.eq(clientId), ArgumentMatchers.eq(organizationIds)))
-                .thenReturn(mockedData);
-
-        // Когда
-        List<StatusCountDto> result = paymentAnalyticService.countByStatus(clientId, organizationIds);
-
-        // Тогда
-        assertNotNull(result);
-        assertEquals(1, result.size(), "Должен быть один результат");
-
-        StatusCountDto dto = result.get(0);
-        assertEquals("APPROVAL", dto.getStatus(), "Статус должен быть APPROVAL");
-        assertEquals(5L, dto.getCount(), "Count должен быть 5");
-    }
-
-    @Test
-    void givenOrganizationIdsIsNull_whenCountByStatus_thenThrowsException() {
-        // Дано
-        UUID clientId = UUID.randomUUID();
-        Set<UUID> organizationIds = null;
-
-        // Когда и Тогда
-        assertThrows(NullPointerException.class, () -> {
-            paymentAnalyticService.countByStatus(clientId, organizationIds);
-        });
-    }
-
-    @Test
-    void givenRepositoryThrowsException_whenCountByStatus_thenExceptionPropagated() {
-        // Дано
-        UUID clientId = UUID.randomUUID();
-        Set<UUID> organizationIds = Set.of(UUID.randomUUID());
-
-        // Настраиваем репозиторий, чтобы он выбрасывал исключение
-        when(paymentAnalyticRepository.countByStatus(ArgumentMatchers.eq(clientId), ArgumentMatchers.eq(organizationIds)))
-                .thenThrow(new RuntimeException("Database error"));
-
-        // Когда и Тогда
-        RuntimeException exception = assertThrows(RuntimeException.class, () -> {
-            paymentAnalyticService.countByStatus(clientId, organizationIds);
-        });
-
-        assertEquals("Database error", exception.getMessage(), "Сообщение исключения должно совпадать");
-    }
-
-    @Test
-    void givenDifferentStatuses_whenCountByStatus_thenCorrectlyProcessesAll() {
-        // Дано
-        UUID clientId = UUID.randomUUID();
-        Set<UUID> organizationIds = Set.of(UUID.randomUUID());
-
-        // Мокируем различные статусы
-        List<StatusCountDto> mockedData = Arrays.asList(
-                new StatusCountDto("APPROVAL", 10L),
-                new StatusCountDto("PROCESSING", 20L),
-                new StatusCountDto("COMPLETED", 15L),
-                new StatusCountDto("DRAFT", 5L),
-                new StatusCountDto("REVOKED", 3L)
-        );
-
-        when(paymentAnalyticRepository.countByStatus(ArgumentMatchers.eq(clientId), ArgumentMatchers.eq(organizationIds)))
-                .thenReturn(mockedData);
-
-        // Когда
-        List<StatusCountDto> result = paymentAnalyticService.countByStatus(clientId, organizationIds);
-
-        // Тогда
-        assertNotNull(result);
-        assertEquals(mockedData.size(), result.size(), "Размер результата должен соответствовать размеру мокированных данных");
-
-        // Создаем набор статусов, для которых count должен быть null
-        Set<String> nullCountStatuses = Set.of("REJECTED", "EXECUTED", "DRAFT", "REVOKED");
-
-        // Проверяем результаты
-        for (StatusCountDto dto : result) {
-            if (nullCountStatuses.contains(dto.getStatus())) {
-                assertNull(dto.getCount(), "Count должен быть null для статуса " + dto.getStatus());
-            } else {
-                assertNotNull(dto.getCount(), "Count не должен быть null для статуса " + dto.getStatus());
-                // Дополнительно проверяем, что значение count соответствует ожидаемому
-                Optional<StatusCountDto> originalDto = mockedData.stream()
-                        .filter(d -> d.getStatus().equals(dto.getStatus()))
-                        .findFirst();
-                assertTrue(originalDto.isPresent(), "Оригинальный DTO должен присутствовать для статуса " + dto.getStatus());
-                assertEquals(originalDto.get().getCount(), dto.getCount(), "Count для статуса " + dto.getStatus() + " должен совпадать с оригинальным");
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("findAllOrganizationIdsWithRightTestCases")
+    void testFindAllOrganizationIdsWithRight(String testName, UserInfo userInfo, String right, Class<? extends Exception> expectedException, Object expectedResult) {
+        if (expectedException != null) {
+            Exception exception = assertThrows(expectedException, () ->
+                    SearchUtils.findAllOrganizationIdsWithRight(userInfo, right)
+            );
+            if (expectedResult != null && exception.getMessage() != null) {
+                assertEquals(expectedResult, exception.getMessage());
             }
+        } else {
+            Set<UUID> result = SearchUtils.findAllOrganizationIdsWithRight(userInfo, right);
+            assertEquals(expectedResult, result);
         }
     }
 }
+??????????????????????????????????????????
 
+
+
+
+import lombok.experimental.UtilityClass;
+
+import java.time.ZonedDateTime;
+import java.util.List;
+import java.util.UUID;
+
+@UtilityClass
+public class UserInfoTestDataWW {
+
+    public static UserInfo getBaseUserInfo() {
+        UserInfo userInfo = new UserInfo();
+        userInfo.setCurrentSession(new CurrentSession(UUID.randomUUID().toString(), null, ZonedDateTime.now()));
+        userInfo.setIndividualId(UUID.randomUUID().toString());
+        userInfo.setLogin("testLogin");
+        userInfo.setUserId(UUID.randomUUID().toString());
+        return userInfo;
+    }
+
+    public static RoleScope getUserInfoRole() {
+        RoleScope role = new RoleScope();
+        role.setId(UUID.randomUUID());
+        return role;
+    }
+
+    // Новый метод для создания RoleScope с заданными параметрами
+    public static RoleScope createRoleScope(UUID organizationId, List<String> rights) {
+        RoleScope role = new RoleScope();
+        role.setId(UUID.randomUUID());
+        role.setOrganizationId(organizationId);
+        role.setRights(rights);
+        return role;
+    }
+
+    // Новый метод для создания UserInfo с заданными ролями
+    public static UserInfo createUserInfoWithRoles(List<RoleScope> roles) {
+        UserInfo userInfo = getBaseUserInfo();
+        userInfo.setRoles(roles);
+        return userInfo;
+    }
+}
+import lombok.experimental.UtilityClass;
+
+import java.time.ZonedDateTime;
+import java.util.List;
+import java.util.UUID;
+
+@UtilityClass
+public class UserInfoTestDataWW {
+
+    public static UserInfo getBaseUserInfo() {
+        UserInfo userInfo = new UserInfo();
+        userInfo.setCurrentSession(new CurrentSession(UUID.randomUUID().toString(), null, ZonedDateTime.now()));
+        userInfo.setIndividualId(UUID.randomUUID().toString());
+        userInfo.setLogin("testLogin");
+        userInfo.setUserId(UUID.randomUUID().toString());
+        return userInfo;
+    }
+
+    public static RoleScope getUserInfoRole() {
+        RoleScope role = new RoleScope();
+        role.setId(UUID.randomUUID());
+        return role;
+    }
+
+    // Новый метод для создания RoleScope с заданными параметрами
+    public static RoleScope createRoleScope(UUID organizationId, List<String> rights) {
+        RoleScope role = new RoleScope();
+        role.setId(UUID.randomUUID());
+        role.setOrganizationId(organizationId);
+        role.setRights(rights);
+        return role;
+    }
+
+    // Новый метод для создания UserInfo с заданными ролями
+    public static UserInfo createUserInfoWithRoles(List<RoleScope> roles) {
+        UserInfo userInfo = getBaseUserInfo();
+        userInfo.setRoles(roles);
+        return userInfo;
+    }
+}
