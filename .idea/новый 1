@@ -1,155 +1,251 @@
-@MockBean
-private UserSessionService userSessionService;
-
 @Test
-void givenClientId_whenGetCount_thenStatus200AndValidResponse() throws Exception {
-    // GIVEN
-    final UUID clientId = UUID.fromString("b2ea73ea-f6bc-42ad-bfb2-a9afa306605e");
+void givenValidData_whenCountByStatus_thenReturnsCorrectCounts() {
+    // Дано
+    UUID clientId = UUID.fromString("123e4567-e89b-12d3-a456-426614174000");
+    Set<UUID> organizationIds = Set.of(UUID.fromString("123e4567-e89b-12d3-a456-426614174001"));
 
-    when(userSessionService.getExtendedUserInfo(any(), any()))
-        .thenReturn(getUserInfoTestData(clientId, PF_LOAN_FUNDS_REQUEST_VIEW));
+    // Предполагается, что в базе данных есть платежи со следующими статусами для заданного clientId и organizationIds:
+    // - APPROVAL (не входит в nullCountStatuses)
+    // - DRAFT и REVOKED (входят в nullCountStatuses)
+    PaymentAnalyticStatus statusApproval = PaymentAnalyticStatus.APPROVAL;
+    PaymentAnalyticStatus statusDraft = PaymentAnalyticStatus.DRAFT;
+    PaymentAnalyticStatus statusRevoked = PaymentAnalyticStatus.REVOKED;
 
-    final String expectedJson = FileUtils.readFileUtf8("json/response/count-by-status.json");
+    // Когда
+    List<StatusCountDto> result = paymentAnalyticService.countByStatus(clientId, organizationIds);
 
-    // WHEN / THEN
-    mockMvc.perform(get(URL + PATH)
-            .header(X_USER_INFO, ENCODED_X_USER_INFO))
-        .andDo(print())
-        .andExpect(status().isOk())
-        .andExpect(content().json(expectedJson, true));
+    // Тогда
+    assertNotNull(result);
+
+    // Преобразуем результат в Map для удобства проверки
+    Map<String, Long> statusCountMap = result.stream()
+            .collect(Collectors.toMap(StatusCountDto::getStatus, StatusCountDto::getCount));
+
+    // Проверяем статус APPROVAL
+    assertTrue(statusCountMap.containsKey(statusApproval.name()), "Статус APPROVAL должен присутствовать в результате");
+    assertEquals(1L, statusCountMap.get(statusApproval.name()), "Количество для статуса APPROVAL должно быть 1");
+
+    // Проверяем статусы DRAFT и REVOKED, у которых count должен быть null
+    assertTrue(statusCountMap.containsKey(statusDraft.name()), "Статус DRAFT должен присутствовать в результате");
+    assertNull(statusCountMap.get(statusDraft.name()), "Количество для статуса DRAFT должно быть null");
+
+    assertTrue(statusCountMap.containsKey(statusRevoked.name()), "Статус REVOKED должен присутствовать в результате");
+    assertNull(statusCountMap.get(statusRevoked.name()), "Количество для статуса REVOKED должно быть null");
 }
 
-@Test
-void whenClientIdNull_thenStatus200AndResponseForAllOrganizations() throws Exception {
-    // GIVEN
-    when(userSessionService.getExtendedUserInfo(any(), any()))
-        .thenReturn(getUserInfoTestData(null, PF_LOAN_FUNDS_REQUEST_VIEW));
 
-    final String expectedJson = FileUtils.readFileUtf8("json/response/count-for-all-orgs.json");
 
-    // WHEN / THEN
-    mockMvc.perform(get(URL + PATH)
-            .header(X_USER_INFO, ENCODED_X_USER_INFO))
-        .andDo(print())
-        .andExpect(status().isOk())
-        .andExpect(content().json(expectedJson, true));
+import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentMatchers;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.*;
+
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.when;
+
+@Transactional
+class PaymentAnalyticServiceTestIT extends SpringBootBaseIT {
+
+    @Autowired
+    private PaymentAnalyticService paymentAnalyticService;
+
+    @MockBean
+    private PaymentAnalyticRepository paymentAnalyticRepository;
+
+    @Test
+    void givenStatusCountsFromRepository_whenCountByStatus_thenSetsNullCountsForSpecificStatuses() {
+        // Дано
+        UUID clientId = UUID.randomUUID();
+        Set<UUID> organizationIds = Set.of(UUID.randomUUID());
+
+        // Мокируем данные, возвращаемые репозиторием
+        List<StatusCountDto> mockedData = Arrays.asList(
+                new StatusCountDto("APPROVAL", 5L),
+                new StatusCountDto("DRAFT", 3L),
+                new StatusCountDto("REVOKED", 2L),
+                new StatusCountDto("PROCESSING", 4L),
+                new StatusCountDto("REJECTED", 1L),
+                new StatusCountDto("EXECUTED", 6L)
+        );
+
+        when(paymentAnalyticRepository.countByStatus(ArgumentMatchers.eq(clientId), ArgumentMatchers.eq(organizationIds)))
+                .thenReturn(mockedData);
+
+        // Когда
+        List<StatusCountDto> result = paymentAnalyticService.countByStatus(clientId, organizationIds);
+
+        // Тогда
+        assertNotNull(result);
+        assertEquals(mockedData.size(), result.size(), "Размер результата должен соответствовать размеру мокированных данных");
+
+        // Создаем набор статусов, для которых count должен быть null
+        Set<String> nullCountStatuses = Set.of("REJECTED", "EXECUTED", "DRAFT", "REVOKED");
+
+        // Проверяем результаты
+        for (StatusCountDto dto : result) {
+            if (nullCountStatuses.contains(dto.getStatus())) {
+                assertNull(dto.getCount(), "Count должен быть null для статуса " + dto.getStatus());
+            } else {
+                assertNotNull(dto.getCount(), "Count не должен быть null для статуса " + dto.getStatus());
+                // Дополнительно проверяем, что значение count соответствует ожидаемому
+                Optional<StatusCountDto> originalDto = mockedData.stream()
+                        .filter(d -> d.getStatus().equals(dto.getStatus()))
+                        .findFirst();
+                assertTrue(originalDto.isPresent(), "Оригинальный DTO должен присутствовать для статуса " + dto.getStatus());
+                assertEquals(originalDto.get().getCount(), dto.getCount(), "Count для статуса " + dto.getStatus() + " должен совпадать с оригинальным");
+            }
+        }
+    }
+
+    @Test
+    void givenEmptyResultFromRepository_whenCountByStatus_thenReturnsEmptyList() {
+        // Дано
+        UUID clientId = UUID.randomUUID();
+        Set<UUID> organizationIds = Set.of(UUID.randomUUID());
+
+        // Мокируем пустой результат от репозитория
+        when(paymentAnalyticRepository.countByStatus(ArgumentMatchers.eq(clientId), ArgumentMatchers.eq(organizationIds)))
+                .thenReturn(Collections.emptyList());
+
+        // Когда
+        List<StatusCountDto> result = paymentAnalyticService.countByStatus(clientId, organizationIds);
+
+        // Тогда
+        assertNotNull(result);
+        assertTrue(result.isEmpty(), "Результат должен быть пустым");
+    }
+
+    @Test
+    void givenNullCountStatusesOnly_whenCountByStatus_thenAllCountsAreNull() {
+        // Дано
+        UUID clientId = UUID.randomUUID();
+        Set<UUID> organizationIds = Set.of(UUID.randomUUID());
+
+        // Мокируем данные только с nullCountStatuses
+        List<StatusCountDto> mockedData = Arrays.asList(
+                new StatusCountDto("REJECTED", 1L),
+                new StatusCountDto("EXECUTED", 2L),
+                new StatusCountDto("DRAFT", 3L),
+                new StatusCountDto("REVOKED", 4L)
+        );
+
+        when(paymentAnalyticRepository.countByStatus(ArgumentMatchers.eq(clientId), ArgumentMatchers.eq(organizationIds)))
+                .thenReturn(mockedData);
+
+        // Когда
+        List<StatusCountDto> result = paymentAnalyticService.countByStatus(clientId, organizationIds);
+
+        // Тогда
+        assertNotNull(result);
+        assertEquals(mockedData.size(), result.size(), "Размер результата должен соответствовать размеру мокированных данных");
+
+        // Проверяем, что для всех статусов count установлен в null
+        for (StatusCountDto dto : result) {
+            assertNull(dto.getCount(), "Count должен быть null для статуса " + dto.getStatus());
+        }
+    }
+
+    @Test
+    void givenClientIdIsNull_whenCountByStatus_thenRepositoryCalledWithNullClientId() {
+        // Дано
+        UUID clientId = null;
+        Set<UUID> organizationIds = Set.of(UUID.randomUUID());
+
+        // Мокируем данные
+        List<StatusCountDto> mockedData = Collections.singletonList(
+                new StatusCountDto("APPROVAL", 5L)
+        );
+
+        when(paymentAnalyticRepository.countByStatus(ArgumentMatchers.eq(clientId), ArgumentMatchers.eq(organizationIds)))
+                .thenReturn(mockedData);
+
+        // Когда
+        List<StatusCountDto> result = paymentAnalyticService.countByStatus(clientId, organizationIds);
+
+        // Тогда
+        assertNotNull(result);
+        assertEquals(1, result.size(), "Должен быть один результат");
+
+        StatusCountDto dto = result.get(0);
+        assertEquals("APPROVAL", dto.getStatus(), "Статус должен быть APPROVAL");
+        assertEquals(5L, dto.getCount(), "Count должен быть 5");
+    }
+
+    @Test
+    void givenOrganizationIdsIsNull_whenCountByStatus_thenThrowsException() {
+        // Дано
+        UUID clientId = UUID.randomUUID();
+        Set<UUID> organizationIds = null;
+
+        // Когда и Тогда
+        assertThrows(NullPointerException.class, () -> {
+            paymentAnalyticService.countByStatus(clientId, organizationIds);
+        });
+    }
+
+    @Test
+    void givenRepositoryThrowsException_whenCountByStatus_thenExceptionPropagated() {
+        // Дано
+        UUID clientId = UUID.randomUUID();
+        Set<UUID> organizationIds = Set.of(UUID.randomUUID());
+
+        // Настраиваем репозиторий, чтобы он выбрасывал исключение
+        when(paymentAnalyticRepository.countByStatus(ArgumentMatchers.eq(clientId), ArgumentMatchers.eq(organizationIds)))
+                .thenThrow(new RuntimeException("Database error"));
+
+        // Когда и Тогда
+        RuntimeException exception = assertThrows(RuntimeException.class, () -> {
+            paymentAnalyticService.countByStatus(clientId, organizationIds);
+        });
+
+        assertEquals("Database error", exception.getMessage(), "Сообщение исключения должно совпадать");
+    }
+
+    @Test
+    void givenDifferentStatuses_whenCountByStatus_thenCorrectlyProcessesAll() {
+        // Дано
+        UUID clientId = UUID.randomUUID();
+        Set<UUID> organizationIds = Set.of(UUID.randomUUID());
+
+        // Мокируем различные статусы
+        List<StatusCountDto> mockedData = Arrays.asList(
+                new StatusCountDto("APPROVAL", 10L),
+                new StatusCountDto("PROCESSING", 20L),
+                new StatusCountDto("COMPLETED", 15L),
+                new StatusCountDto("DRAFT", 5L),
+                new StatusCountDto("REVOKED", 3L)
+        );
+
+        when(paymentAnalyticRepository.countByStatus(ArgumentMatchers.eq(clientId), ArgumentMatchers.eq(organizationIds)))
+                .thenReturn(mockedData);
+
+        // Когда
+        List<StatusCountDto> result = paymentAnalyticService.countByStatus(clientId, organizationIds);
+
+        // Тогда
+        assertNotNull(result);
+        assertEquals(mockedData.size(), result.size(), "Размер результата должен соответствовать размеру мокированных данных");
+
+        // Создаем набор статусов, для которых count должен быть null
+        Set<String> nullCountStatuses = Set.of("REJECTED", "EXECUTED", "DRAFT", "REVOKED");
+
+        // Проверяем результаты
+        for (StatusCountDto dto : result) {
+            if (nullCountStatuses.contains(dto.getStatus())) {
+                assertNull(dto.getCount(), "Count должен быть null для статуса " + dto.getStatus());
+            } else {
+                assertNotNull(dto.getCount(), "Count не должен быть null для статуса " + dto.getStatus());
+                // Дополнительно проверяем, что значение count соответствует ожидаемому
+                Optional<StatusCountDto> originalDto = mockedData.stream()
+                        .filter(d -> d.getStatus().equals(dto.getStatus()))
+                        .findFirst();
+                assertTrue(originalDto.isPresent(), "Оригинальный DTO должен присутствовать для статуса " + dto.getStatus());
+                assertEquals(originalDto.get().getCount(), dto.getCount(), "Count для статуса " + dto.getStatus() + " должен совпадать с оригинальным");
+            }
+        }
+    }
 }
 
-@Test
-void whenNoAccessToClientId_thenThrowsAccessDeniedException() throws Exception {
-    // GIVEN
-    final UUID clientId = UUID.fromString("b2ea73ea-f6bc-42ad-bfb2-a9afa306605e");
-
-    when(userSessionService.getExtendedUserInfo(any(), any()))
-        .thenReturn(getUserInfoTestDataWithoutAccess(clientId));
-
-    // WHEN / THEN
-    mockMvc.perform(get(URL + PATH)
-            .header(X_USER_INFO, ENCODED_X_USER_INFO))
-        .andDo(print())
-        .andExpect(status().isForbidden());
-}
-
-@Test
-void whenClientIdNotExists_thenThrowsNoSuchElementException() throws Exception {
-    // GIVEN
-    final UUID clientId = UUID.fromString("nonexistent-id");
-
-    when(userSessionService.getExtendedUserInfo(any(), any()))
-        .thenThrow(new NoSuchElementException("No role found for clientId"));
-
-    // WHEN / THEN
-    mockMvc.perform(get(URL + PATH)
-            .header(X_USER_INFO, ENCODED_X_USER_INFO))
-        .andDo(print())
-        .andExpect(status().isNotFound());
-}
-
-@Test
-void whenUserHasEmptyRoles_thenThrowsAccessDeniedException() throws Exception {
-    // GIVEN
-    when(userSessionService.getExtendedUserInfo(any(), any()))
-        .thenReturn(getUserInfoWithEmptyRoles());
-
-    // WHEN / THEN
-    mockMvc.perform(get(URL + PATH)
-            .header(X_USER_INFO, ENCODED_X_USER_INFO))
-        .andDo(print())
-        .andExpect(status().isForbidden());
-}
-
-@Test
-void whenUserHasAccessToMultipleOrganizations_thenReturnsAggregatedResponse() throws Exception {
-    // GIVEN
-    when(userSessionService.getExtendedUserInfo(any(), any()))
-        .thenReturn(getUserInfoWithMultipleOrgsAccess());
-
-    final String expectedJson = FileUtils.readFileUtf8("json/response/aggregated-response.json");
-
-    // WHEN / THEN
-    mockMvc.perform(get(URL + PATH)
-            .header(X_USER_INFO, ENCODED_X_USER_INFO))
-        .andDo(print())
-        .andExpect(status().isOk())
-        .andExpect(content().json(expectedJson, true));
-}
-
-@Test
-void whenNoBidsForOrganizations_thenReturnsEmptyResult() throws Exception {
-    // GIVEN
-    when(userSessionService.getExtendedUserInfo(any(), any()))
-        .thenReturn(getUserInfoTestData(null, PF_LOAN_FUNDS_REQUEST_VIEW));
-
-    final String expectedJson = FileUtils.readFileUtf8("json/response/empty-response.json");
-
-    // WHEN / THEN
-    mockMvc.perform(get(URL + PATH)
-            .header(X_USER_INFO, ENCODED_X_USER_INFO))
-        .andDo(print())
-        .andExpect(status().isOk())
-        .andExpect(content().json(expectedJson, true));
-}
-
-@Test
-void whenUserHasNoRightsInRoles_thenThrowsAccessDeniedException() throws Exception {
-    // GIVEN
-    when(userSessionService.getExtendedUserInfo(any(), any()))
-        .thenReturn(getUserInfoWithoutRights());
-
-    // WHEN / THEN
-    mockMvc.perform(get(URL + PATH)
-            .header(X_USER_INFO, ENCODED_X_USER_INFO))
-        .andDo(print())
-        .andExpect(status().isForbidden());
-}
-
-@Test
-void whenUserInfoIsNull_thenThrowsAccessDeniedException() throws Exception {
-    // GIVEN
-    when(userSessionService.getExtendedUserInfo(any(), any()))
-        .thenReturn(null);
-
-    // WHEN / THEN
-    mockMvc.perform(get(URL + PATH)
-            .header(X_USER_INFO, ENCODED_X_USER_INFO))
-        .andDo(print())
-        .andExpect(status().isForbidden());
-}
-
-@Test
-void whenResponseMatchesExpectedJson_thenStatus200AndStrictMatching() throws Exception {
-    // GIVEN
-    final UUID clientId = UUID.fromString("b2ea73ea-f6bc-42ad-bfb2-a9afa306605e");
-
-    when(userSessionService.getExtendedUserInfo(any(), any()))
-        .thenReturn(getUserInfoTestData(clientId, PF_LOAN_FUNDS_REQUEST_VIEW));
-
-    final String expectedJson = FileUtils.readFileUtf8("json/response/count-by-status.json");
-
-    // WHEN / THEN
-    mockMvc.perform(get(URL + PATH)
-            .header(X_USER_INFO, ENCODED_X_USER_INFO))
-        .andDo(print())
-        .andExpect(status().isOk())
-        .andExpect(content().json(expectedJson, true));
-}
