@@ -1,219 +1,273 @@
-import static org.junit.jupiter.api.Assertions.*;
+Вот пример кода для классов и интерфейсов, которые вы упомянули:
 
-import java.util.*;
-import java.util.stream.Stream;
+* * *
 
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.*;
-import org.mockito.junit.jupiter.MockitoExtension;
+### **BaseQdslEntityGraphSimpleJpaRepository**
 
-@ExtendWith(MockitoExtension.class)
-public class SearchUtilsTest {
+```java
+import com.querydsl.core.types.Predicate;
+import com.querydsl.jpa.impl.JPAQuery;
+import jakarta.persistence.EntityGraph;
+import jakarta.persistence.EntityManager;
+import org.springframework.data.jpa.repository.support.SimpleJpaRepository;
+import org.springframework.lang.NonNull;
 
-    private UUID clientId;
-    private UUID orgId1;
-    private UUID orgId2;
-    private String right;
+import java.util.List;
 
-    @BeforeEach
-    void setUp() {
-        clientId = UUID.randomUUID();
-        orgId1 = UUID.randomUUID();
-        orgId2 = UUID.randomUUID();
-        right = "VIEW_REPORTS";
+public abstract class BaseQdslEntityGraphSimpleJpaRepository<E, I> 
+        extends SimpleJpaRepository<E, I>
+        implements QdslEntityGraphSimpleJpaRepository<E, I> {
+
+    protected final EntityManager entityManager;
+    protected final EntityPath<E> path;
+    protected final PathBuilder<E> builder;
+    protected final Querydsl querydsl;
+
+    protected BaseQdslEntityGraphSimpleJpaRepository(@NonNull Class<E> entityClass,
+                                                     @NonNull EntityManager entityManager) {
+        super(entityClass, entityManager);
+        this.entityManager = entityManager;
+        this.path = SimpleEntityPathResolver.INSTANCE.createPath(entityClass);
+        this.builder = new PathBuilder<>(path.getType(), path.getMetadata());
+        this.querydsl = new Querydsl(entityManager, builder);
     }
 
-    // Параметризованные тесты для findOrganizationIdByClientId
+    @Override
+    public List<E> findAll(@NonNull Predicate predicate,
+                           @NonNull EntityGraph.EntityGraphType entityGraphType,
+                           @NonNull EntityGraph<?> entityGraph) {
+        JPAQuery<E> query = createQuery(predicate);
+        query.setHint(entityGraphType.getKey(), entityGraph);
+        return query.fetch();
+    }
 
-    static Stream<Arguments> findOrganizationIdByClientIdTestCases() {
-        UUID clientId = UUID.randomUUID();
-        UUID orgId1 = UUID.randomUUID();
+    private JPAQuery<E> createQuery(Predicate predicate) {
+        return querydsl.createQuery(path).where(predicate);
+    }
+}
+```
 
-        // Создание ролей с использованием UserInfoTestDataWW
-        RoleScope matchingRole = UserInfoTestDataWW.createRoleScope(clientId, Arrays.asList("RIGHT1"));
-        RoleScope nonMatchingRole = UserInfoTestDataWW.createRoleScope(orgId1, Arrays.asList("RIGHT2"));
-        RoleScope nullOrganizationIdRole = UserInfoTestDataWW.createRoleScope(null, Arrays.asList("RIGHT3"));
+* * *
 
-        // Создание UserInfo с различными ролями
-        UserInfo userWithNullRoles = UserInfoTestDataWW.getBaseUserInfo();
-        userWithNullRoles.setRoles(null);
+### **QdslEntityGraphSimpleJpaRepository**
 
-        UserInfo userWithEmptyRoles = UserInfoTestDataWW.createUserInfoWithRoles(Collections.emptyList());
+```java
+import com.querydsl.core.types.Predicate;
+import jakarta.persistence.EntityGraph;
+import org.springframework.lang.NonNull;
 
-        UserInfo userWithMatchingRole = UserInfoTestDataWW.createUserInfoWithRoles(Arrays.asList(matchingRole));
+import java.util.List;
 
-        UserInfo userWithNonMatchingRoles = UserInfoTestDataWW.createUserInfoWithRoles(Arrays.asList(nonMatchingRole));
+public interface QdslEntityGraphSimpleJpaRepository<E, I> {
+    /**
+     * Выполняет поиск всех сущностей с использованием предиката и EntityGraph.
+     *
+     * @param predicate       условия для фильтрации данных.
+     * @param entityGraphType тип загрузки EntityGraph.
+     * @param entityGraph     конкретный граф для загрузки связанных сущностей.
+     * @return список сущностей, соответствующих условиям.
+     */
+    @NonNull
+    List<E> findAll(@NonNull Predicate predicate,
+                    @NonNull EntityGraph.EntityGraphType entityGraphType,
+                    @NonNull EntityGraph<?> entityGraph);
+}
+```
 
-        UserInfo userWithNullOrganizationIdRole = UserInfoTestDataWW.createUserInfoWithRoles(Arrays.asList(nullOrganizationIdRole, matchingRole));
+* * *
 
-        return Stream.of(
-                Arguments.of("clientId равен null", null, userWithMatchingRole, NullPointerException.class, null),
-                Arguments.of("userInfo равен null", clientId, null, NullPointerException.class, null),
-                Arguments.of("Роли пользователя равны null", clientId, userWithNullRoles, AccessDeniedException.class, "Неожиданно роли пользователя NULL. clientId: " + clientId),
-                Arguments.of("Роли пользователя пусты", clientId, userWithEmptyRoles, AccessDeniedException.class, "Неожиданно роли пользователя NULL. clientId: " + clientId),
-                Arguments.of("Есть роль с соответствующим clientId", clientId, userWithMatchingRole, null, clientId),
-                Arguments.of("Нет роли с соответствующим clientId", clientId, userWithNonMatchingRoles, RoleNotFoundException.class, "Не найдена роль где organizationId=clientId. clientId: " + clientId),
-                Arguments.of("Роль с null в organizationId игнорируется", clientId, userWithNullOrganizationIdRole, null, clientId)
+### **PaymentAnalyticQdslOptimizationRepository**
+
+```java
+import com.querydsl.core.types.Predicate;
+import org.springframework.lang.NonNull;
+
+import java.util.List;
+
+public interface PaymentAnalyticQdslOptimizationRepository 
+        extends QdslEntityGraphSimpleJpaRepository<PaymentAnalyticEntity, UUID> {
+
+    /**
+     * Поиск аналитики с использованием полного EntityGraph.
+     *
+     * @param predicate условия фильтрации.
+     * @return список аналитических сущностей.
+     */
+    @NonNull
+    List<PaymentAnalyticEntity> findAllWithFullEntityGraph(@NonNull Predicate predicate);
+}
+```
+
+* * *
+
+### **PaymentAnalyticQdslOptimizationRepositoryImpl**
+
+```java
+import com.querydsl.core.types.Predicate;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.EntityGraph;
+import org.springframework.lang.NonNull;
+import org.springframework.stereotype.Repository;
+
+import java.util.List;
+
+@Repository
+public class PaymentAnalyticQdslOptimizationRepositoryImpl
+        extends BaseQdslEntityGraphSimpleJpaRepository<PaymentAnalyticEntity, UUID>
+        implements PaymentAnalyticQdslOptimizationRepository {
+
+    protected PaymentAnalyticQdslOptimizationRepositoryImpl(@NonNull EntityManager entityManager) {
+        super(PaymentAnalyticEntity.class, entityManager);
+    }
+
+    @Override
+    @NonNull
+    public List<PaymentAnalyticEntity> findAllWithFullEntityGraph(@NonNull Predicate predicate) {
+        return findAll(
+                predicate,
+                EntityGraph.EntityGraphType.LOAD,
+                entityManager.getEntityGraph(PaymentAnalyticEntity.ANALYTIC_FULL_ITEM_NAME_ENTITY_GRAPH)
         );
     }
-
-    @ParameterizedTest(name = "{0}")
-    @MethodSource("findOrganizationIdByClientIdTestCases")
-    void testFindOrganizationIdByClientId(String testName, UUID clientId, UserInfo userInfo, Class<? extends Exception> expectedException, Object expectedResult) {
-        if (expectedException != null) {
-            Exception exception = assertThrows(expectedException, () ->
-                    SearchUtils.findOrganizationIdByClientId(clientId, userInfo)
-            );
-            if (expectedResult != null && exception.getMessage() != null) {
-                assertEquals(expectedResult, exception.getMessage());
-            }
-        } else {
-            UUID result = SearchUtils.findOrganizationIdByClientId(clientId, userInfo);
-            assertEquals(expectedResult, result);
-        }
-    }
-
-    // Параметризованные тесты для findAllOrganizationIdsWithRight
-
-    static Stream<Arguments> findAllOrganizationIdsWithRightTestCases() {
-        String right = "VIEW_REPORTS";
-        UUID orgId1 = UUID.randomUUID();
-        UUID orgId2 = UUID.randomUUID();
-
-        // Создание ролей с использованием UserInfoTestDataWW
-        RoleScope roleWithRight1 = UserInfoTestDataWW.createRoleScope(orgId1, Arrays.asList(right, "EDIT_DATA"));
-        RoleScope roleWithRight2 = UserInfoTestDataWW.createRoleScope(orgId2, Arrays.asList(right));
-        RoleScope roleWithoutRight = UserInfoTestDataWW.createRoleScope(UUID.randomUUID(), Arrays.asList("EDIT_DATA"));
-        RoleScope roleWithNullRights = UserInfoTestDataWW.createRoleScope(UUID.randomUUID(), null);
-        RoleScope roleWithNullOrganizationId = UserInfoTestDataWW.createRoleScope(null, Arrays.asList(right));
-
-        // Создание UserInfo с различными ролями
-        UserInfo userWithNullRoles = UserInfoTestDataWW.getBaseUserInfo();
-        userWithNullRoles.setRoles(null);
-
-        UserInfo userWithEmptyRoles = UserInfoTestDataWW.createUserInfoWithRoles(Collections.emptyList());
-
-        UserInfo userWithRolesHavingRights = UserInfoTestDataWW.createUserInfoWithRoles(Arrays.asList(roleWithRight1, roleWithRight2, roleWithoutRight));
-
-        UserInfo userWithNoRolesHavingRight = UserInfoTestDataWW.createUserInfoWithRoles(Arrays.asList(roleWithoutRight));
-
-        UserInfo userWithRolesHavingNullRights = UserInfoTestDataWW.createUserInfoWithRoles(Arrays.asList(roleWithNullRights, roleWithRight1));
-
-        UserInfo userWithRolesHavingNullOrganizationId = UserInfoTestDataWW.createUserInfoWithRoles(Arrays.asList(roleWithNullOrganizationId, roleWithRight1));
-
-        return Stream.of(
-                Arguments.of("userInfo равен null", null, right, NullPointerException.class, null),
-                Arguments.of("right равен null", userWithRolesHavingRights, null, NullPointerException.class, null),
-                Arguments.of("Роли пользователя равны null", userWithNullRoles, right, AccessDeniedException.class, "Неожиданно роли пользователя NULL. UserInfo: " + userWithNullRoles),
-                Arguments.of("Роли пользователя пусты", userWithEmptyRoles, right, AccessDeniedException.class, "Неожиданно роли пользователя NULL. UserInfo: " + userWithEmptyRoles),
-                Arguments.of("Есть роли с указанным правом", userWithRolesHavingRights, right, null, new HashSet<>(Arrays.asList(orgId1, orgId2))),
-                Arguments.of("Нет ролей с указанным правом", userWithNoRolesHavingRight, right, AccessDeniedException.class, "Не найдены организации с правом: " + right),
-                Arguments.of("Роли с null в rights игнорируются", userWithRolesHavingNullRights, right, null, new HashSet<>(Arrays.asList(orgId1))),
-                Arguments.of("Роли с null в organizationId игнорируются", userWithRolesHavingNullOrganizationId, right, null, new HashSet<>(Arrays.asList(orgId1)))
-        );
-    }
-
-    @ParameterizedTest(name = "{0}")
-    @MethodSource("findAllOrganizationIdsWithRightTestCases")
-    void testFindAllOrganizationIdsWithRight(String testName, UserInfo userInfo, String right, Class<? extends Exception> expectedException, Object expectedResult) {
-        if (expectedException != null) {
-            Exception exception = assertThrows(expectedException, () ->
-                    SearchUtils.findAllOrganizationIdsWithRight(userInfo, right)
-            );
-            if (expectedResult != null && exception.getMessage() != null) {
-                assertEquals(expectedResult, exception.getMessage());
-            }
-        } else {
-            Set<UUID> result = SearchUtils.findAllOrganizationIdsWithRight(userInfo, right);
-            assertEquals(expectedResult, result);
-        }
-    }
 }
-??????????????????????????????????????????
+```
 
+* * *
 
+### **Объяснение:**
 
+1.  **`BaseQdslEntityGraphSimpleJpaRepository`:**
+    
+    - Базовый класс, обрабатывающий запросы с QueryDSL и EntityGraph.
+    - Метод `findAll` использует `Predicate` для условий и `EntityGraph` для оптимизации загрузки.
+2.  **`QdslEntityGraphSimpleJpaRepository`:**
+    
+    - Интерфейс с контрактом для методов, работающих с QueryDSL и EntityGraph.
+3.  **`PaymentAnalyticQdslOptimizationRepository`:**
+    
+    - Расширяет базовый интерфейс для работы с сущностью `PaymentAnalyticEntity`.
+4.  **`PaymentAnalyticQdslOptimizationRepositoryImpl`:**
+    
+    - Реализует кастомный метод `findAllWithFullEntityGraph` для загрузки связанных данных аналитических сущностей.
 
-import lombok.experimental.UtilityClass;
+Если нужно добавить больше контекста или доработать код, дайте знать!
 
-import java.time.ZonedDateTime;
-import java.util.List;
-import java.util.UUID;
+### Код из предоставленных изображений
 
-@UtilityClass
-public class UserInfoTestDataWW {
+#### **BaseReadOnlyRepository**
 
-    public static UserInfo getBaseUserInfo() {
-        UserInfo userInfo = new UserInfo();
-        userInfo.setCurrentSession(new CurrentSession(UUID.randomUUID().toString(), null, ZonedDateTime.now()));
-        userInfo.setIndividualId(UUID.randomUUID().toString());
-        userInfo.setLogin("testLogin");
-        userInfo.setUserId(UUID.randomUUID().toString());
-        return userInfo;
-    }
-
-    public static RoleScope getUserInfoRole() {
-        RoleScope role = new RoleScope();
-        role.setId(UUID.randomUUID());
-        return role;
-    }
-
-    // Новый метод для создания RoleScope с заданными параметрами
-    public static RoleScope createRoleScope(UUID organizationId, List<String> rights) {
-        RoleScope role = new RoleScope();
-        role.setId(UUID.randomUUID());
-        role.setOrganizationId(organizationId);
-        role.setRights(rights);
-        return role;
-    }
-
-    // Новый метод для создания UserInfo с заданными ролями
-    public static UserInfo createUserInfoWithRoles(List<RoleScope> roles) {
-        UserInfo userInfo = getBaseUserInfo();
-        userInfo.setRoles(roles);
-        return userInfo;
-    }
+```java
+@NoRepositoryBean
+public interface BaseReadOnlyRepository<T, ID extends Serializable>
+        extends Repository<T, ID>, QuerydslPredicateExecutor<T> {
 }
-import lombok.experimental.UtilityClass;
+```
 
-import java.time.ZonedDateTime;
-import java.util.List;
-import java.util.UUID;
+* * *
 
-@UtilityClass
-public class UserInfoTestDataWW {
+#### **PaymentAnalyticRepository**
 
-    public static UserInfo getBaseUserInfo() {
-        UserInfo userInfo = new UserInfo();
-        userInfo.setCurrentSession(new CurrentSession(UUID.randomUUID().toString(), null, ZonedDateTime.now()));
-        userInfo.setIndividualId(UUID.randomUUID().toString());
-        userInfo.setLogin("testLogin");
-        userInfo.setUserId(UUID.randomUUID().toString());
-        return userInfo;
-    }
-
-    public static RoleScope getUserInfoRole() {
-        RoleScope role = new RoleScope();
-        role.setId(UUID.randomUUID());
-        return role;
-    }
-
-    // Новый метод для создания RoleScope с заданными параметрами
-    public static RoleScope createRoleScope(UUID organizationId, List<String> rights) {
-        RoleScope role = new RoleScope();
-        role.setId(UUID.randomUUID());
-        role.setOrganizationId(organizationId);
-        role.setRights(rights);
-        return role;
-    }
-
-    // Новый метод для создания UserInfo с заданными ролями
-    public static UserInfo createUserInfoWithRoles(List<RoleScope> roles) {
-        UserInfo userInfo = getBaseUserInfo();
-        userInfo.setRoles(roles);
-        return userInfo;
-    }
+```java
+public interface PaymentAnalyticRepository
+        extends BaseReadOnlyRepository<PaymentAnalyticEntity, UUID>,
+                QuerydslPredicateExecutor<PaymentAnalyticEntity>,
+                QPaymentAnalyticRepository {
 }
+```
+
+* * *
+
+#### **PaymentObjectRepository**
+
+```java
+public interface PaymentObjectRepository
+        extends BaseReadOnlyRepository<PaymentObjectEntity, UUID> {
+}
+```
+
+* * *
+
+#### **PaymentsSsrArticleRepository**
+
+```java
+public interface PaymentsSsrArticleRepository
+        extends BaseReadOnlyRepository<PaymentSsrArticleEntity, UUID> {
+}
+```
+
+* * *
+
+#### **Список методов BaseReadOnlyRepository**
+
+- **count()**
+- **count(Specification<t>)</t>**
+- **exists(Specification<t>)</t>**
+- **existsById(ID)**
+- **findAll()**
+- **findAll(Pageable)**
+- **findAll(Sort)**
+- **findAll(Specification<t>)</t>**
+- **findAll(Specification<t>, Pageable)</t>**
+- **findAll(Specification<t>, Sort)</t>**
+- **findAllById(Iterable<id>)</id>**
+- **findBy(Specification<t>, Function<...>)</t>**
+- **findById(ID)**
+- **findOne(Specification<t>)</t>**
+- **getReferenceById(ID)**
+
+* * *
+
+Если нужно обсудить функциональность или добавить новые методы/особенности, напишите!  
+Ваше задание можно сформулировать следующим образом:
+
+* * *
+
+### **Описание задачи**
+
+Необходимо реализовать метод для выполнения поискового запроса в базу данных с использованием Spring Data JPA и QueryDSL. Метод должен возвращать записи из сущности `tran_payment_analytic`, а также связанные с ней сущности (`tran_payment_object`, `tran_payment_ssr_article` и другие). В процессе выполнения запроса необходимо учитывать следующие аспекты:
+
+* * *
+
+### **Требования к реализации**
+
+1.  **Фильтрация данных:**
+    
+    - Ограничить записи на основании фильтров из объекта `request.filter`:
+        - Фильтр по `clientId` (из `request.filter.clientIds`) или по `organizationId` (из `roles[].organizationId`).
+        - Если отсутствует `loanFundsRequestStatuses`, ограничить записи по умолчанию — статусам из справочника `PF_LOAN_FUNDS_REQUEST`.
+    - Применить фильтрацию по статусам `tran_payment_analytic.status IN`.
+2.  **Постраничная выдача:**
+    
+    - Реализовать постраничный вывод данных в соответствии с параметрами `request.pagination`.
+    - Если параметры пагинации отсутствуют, использовать значения по умолчанию, определенные в `PaginationRequestDTO`.
+3.  **Выбор полей для ответа:**
+    
+    - Включить в ответ только те поля, чьи коды указаны в массиве `request.fields[]`. Если массив пустой, вернуть все доступные поля.
+4.  **Обработка связанных данных:**
+    
+    - Если поле `tran_payment_analytic.payment_document_id` заполнено:
+        - Собрать значения `payment_document_id` в массив `ids[]`.
+        - Выполнить REST API запрос для получения данных о статусах платежных поручений (`paymentOrderStatus`).
+        - Обогатить результирующий объект данными из API.
+5.  **Извлечение дополнительных данных:**
+    
+    - Из каждого элемента ответа извлечь поле `paymentOrders[].status` и обработать его.
+6.  **Сортировка:**
+    
+    - Если массив `request.sorting[]` пустой, отсортировать выборку по полю `DATE` в порядке убывания.
+
+* * *
+
+### **Ожидаемый результат**
+
+Реализованный метод должен:
+
+- Учитывать все указанные фильтры.
+- Поддерживать постраничный вывод.
+- Выполнять сортировку данных.
+- Подгружать связанные данные через REST API.
+- Возвращать только те поля, которые указаны в запросе, или все доступные, если ограничений нет.
+
+* * *
+
+Если нужно уточнить отдельные пункты или обсудить реализацию, дайте знать!
