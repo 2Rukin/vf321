@@ -104,4 +104,35 @@ public <T> Expression<?>[] mapFieldsToProjections(Class<E> entityClass, Class<T>
     return projections.toArray(new Expression<?>[0]);
 }
 
+public List<String> extractJoinsFromGraph(EntityManager entityManager, String graphName, Class<?> entityClass) {
+    EntityGraph<?> entityGraph = entityManager.getEntityGraph(graphName);
+
+    // Список связей (атрибутов)
+    List<String> joins = new ArrayList<>();
+    for (AttributeNode<?> node : entityGraph.getAttributeNodes()) {
+        joins.add(node.getAttributeName());
+    }
+
+    return joins;
+}
+public <E> JPAQuery<E> applyJoinsFromGraph(
+    JPAQuery<E> query,
+    EntityManager entityManager,
+    String graphName,
+    EntityPathBase<E> rootEntity
+) {
+    // Извлекаем связи из графа
+    List<String> joins = extractJoinsFromGraph(entityManager, graphName, rootEntity.getType());
+
+    // Применяем `join` для каждой связи
+    for (String join : joins) {
+        PathBuilder<?> joinPath = new PathBuilder<>(rootEntity.getType(), join);
+        query.leftJoin(joinPath);
+    }
+
+    return query;
+}
+
+
+
 
