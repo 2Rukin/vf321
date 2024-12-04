@@ -1,273 +1,86 @@
-Вот пример кода для классов и интерфейсов, которые вы упомянули:
+Function<JPAQuery<PaymentAnalyticEntity>, JPAQuery<MyResponseDto>> projectionFunction = query -> {
+    QPaymentAnalyticEntity paymentAnalytic = QPaymentAnalyticEntity.paymentAnalyticEntity;
+    QPaymentObject paymentObject = QPaymentObject.paymentObject;
+    QPaymentObjectSsr paymentObjectSsr = QPaymentObjectSsr.paymentObjectSsr;
+    QPaymentSsrArticle ssrArticle = QPaymentSsrArticle.paymentSsrArticle;
+    QConfirmationDocument confirmationDocument = QConfirmationDocument.confirmationDocument;
 
-* * *
+    return query.select(Projections.bean(
+            MyResponseDto.class,
+            // Основные поля
+            paymentAnalytic.id,
+            paymentAnalytic.clientId,
+            paymentAnalytic.number.as("applicationNumber"),
+            paymentAnalytic.status.as("loanFundsRequestStatus"),
+            paymentAnalytic.date.as("applicationDate"),
+            paymentAnalytic.fundsType.as("fundsType"),
+            paymentAnalytic.creditAgreementNumber.as("creditAgreementNumber"),
+            paymentAnalytic.creditAgreementDate.as("creditAgreementDate"),
+            paymentAnalytic.payerAccount.as("payerAccount"),
+            paymentAnalytic.obcAccountFlag.as("obcAccountFlag"),
+            paymentAnalytic.trancheIssueDate.as("trancheIssueDate"),
+            paymentAnalytic.amount.as("amount"),
+            paymentAnalytic.paymentPurpose.as("paymentPurpose"),
+            paymentAnalytic.recipientName.as("recipientName"),
+            paymentAnalytic.recipientAccount.as("recipientAccount"),
+            paymentAnalytic.dvruNumber.as("dvruNumber"),
+            paymentAnalytic.dvruDate.as("dvruDate"),
+            paymentAnalytic.paymentType.as("paymentType"),
+            paymentAnalytic.paymentOrderStatus.as("paymentOrderStatus"),
+            // Связанные таблицы
+            paymentObject.id.as("paymentObjectId"),
+            paymentObjectSsr.article.as("paymentObjectArticle"),
+            ssrArticle.code.as("ssrArticleCodes"),
+            confirmationDocument.documentNumber.as("confirmationDocumentNumber")
+        ))
+        .from(paymentAnalytic)
+        // Связь с paymentObject
+        .leftJoin(paymentAnalytic.paymentObjects, paymentObject)
+        // Связь с paymentObjectSsr через paymentObject
+        .leftJoin(paymentObject.paymentObjectSsr, paymentObjectSsr)
+        // Связь с ssrArticle через paymentObjectSsr
+        .leftJoin(paymentObjectSsr.ssrArticles, ssrArticle)
+        // Связь с confirmationDocument
+        .leftJoin(paymentAnalytic.confirmationDocuments, confirmationDocument);
+};
 
-### **BaseQdslEntityGraphSimpleJpaRepository**
+import com.querydsl.core.types.Expression;
+import com.querydsl.core.types.dsl.PathBuilder;
+import com.querydsl.core.types.dsl.SimpleExpression;
 
-```java
-import com.querydsl.core.types.Predicate;
-import com.querydsl.jpa.impl.JPAQuery;
-import jakarta.persistence.EntityGraph;
-import jakarta.persistence.EntityManager;
-import org.springframework.data.jpa.repository.support.SimpleJpaRepository;
-import org.springframework.lang.NonNull;
-
+import java.lang.reflect.Method;
+import java.util.ArrayList;
 import java.util.List;
 
-public abstract class BaseQdslEntityGraphSimpleJpaRepository<E, I> 
-        extends SimpleJpaRepository<E, I>
-        implements QdslEntityGraphSimpleJpaRepository<E, I> {
+public class QuerydslProjectionMapper {
 
-    protected final EntityManager entityManager;
-    protected final EntityPath<E> path;
-    protected final PathBuilder<E> builder;
-    protected final Querydsl querydsl;
+    public static <Entity, DTO> List<Expression<?>> mapFieldsToProjections(Class<Entity> entityClass, Class<DTO> dtoClass) {
+        List<Expression<?>> projections = new ArrayList<>();
 
-    protected BaseQdslEntityGraphSimpleJpaRepository(@NonNull Class<E> entityClass,
-                                                     @NonNull EntityManager entityManager) {
-        super(entityClass, entityManager);
-        this.entityManager = entityManager;
-        this.path = SimpleEntityPathResolver.INSTANCE.createPath(entityClass);
-        this.builder = new PathBuilder<>(path.getType(), path.getMetadata());
-        this.querydsl = new Querydsl(entityManager, builder);
-    }
+        // Создаем PathBuilder для указанного класса сущности
+        PathBuilder<Entity> entityPath = new PathBuilder<>(entityClass, entityClass.getSimpleName().toLowerCase());
 
-    @Override
-    public List<E> findAll(@NonNull Predicate predicate,
-                           @NonNull EntityGraph.EntityGraphType entityGraphType,
-                           @NonNull EntityGraph<?> entityGraph) {
-        JPAQuery<E> query = createQuery(predicate);
-        query.setHint(entityGraphType.getKey(), entityGraph);
-        return query.fetch();
-    }
+        // Проходим по всем методам DTO
+        for (Method method : dtoClass.getDeclaredMethods()) {
+            String methodName = method.getName();
+            if (methodName.startsWith("get")) {
+                // Преобразуем имя метода в имя поля (удаляем "get" и делаем первую букву строчной)
+                String fieldName = Character.toLowerCase(methodName.charAt(3)) + methodName.substring(4);
 
-    private JPAQuery<E> createQuery(Predicate predicate) {
-        return querydsl.createQuery(path).where(predicate);
-    }
-}
-```
+                try {
+                    // Получаем поле QueryDSL по имени
+                    SimpleExpression<?> fieldExpression = entityPath.get(fieldName);
+                    // Добавляем поле в список проекций
+                    projections.add(fieldExpression.as(fieldName));
+                } catch (IllegalArgumentException e) {
+                    // Если поле не найдено в PathBuilder, можно обработать исключение
+                    System.err.println("Field not found for method: " + methodName);
+                }
+            }
+        }
 
-* * *
-
-### **QdslEntityGraphSimpleJpaRepository**
-
-```java
-import com.querydsl.core.types.Predicate;
-import jakarta.persistence.EntityGraph;
-import org.springframework.lang.NonNull;
-
-import java.util.List;
-
-public interface QdslEntityGraphSimpleJpaRepository<E, I> {
-    /**
-     * Выполняет поиск всех сущностей с использованием предиката и EntityGraph.
-     *
-     * @param predicate       условия для фильтрации данных.
-     * @param entityGraphType тип загрузки EntityGraph.
-     * @param entityGraph     конкретный граф для загрузки связанных сущностей.
-     * @return список сущностей, соответствующих условиям.
-     */
-    @NonNull
-    List<E> findAll(@NonNull Predicate predicate,
-                    @NonNull EntityGraph.EntityGraphType entityGraphType,
-                    @NonNull EntityGraph<?> entityGraph);
-}
-```
-
-* * *
-
-### **PaymentAnalyticQdslOptimizationRepository**
-
-```java
-import com.querydsl.core.types.Predicate;
-import org.springframework.lang.NonNull;
-
-import java.util.List;
-
-public interface PaymentAnalyticQdslOptimizationRepository 
-        extends QdslEntityGraphSimpleJpaRepository<PaymentAnalyticEntity, UUID> {
-
-    /**
-     * Поиск аналитики с использованием полного EntityGraph.
-     *
-     * @param predicate условия фильтрации.
-     * @return список аналитических сущностей.
-     */
-    @NonNull
-    List<PaymentAnalyticEntity> findAllWithFullEntityGraph(@NonNull Predicate predicate);
-}
-```
-
-* * *
-
-### **PaymentAnalyticQdslOptimizationRepositoryImpl**
-
-```java
-import com.querydsl.core.types.Predicate;
-import jakarta.persistence.EntityManager;
-import jakarta.persistence.EntityGraph;
-import org.springframework.lang.NonNull;
-import org.springframework.stereotype.Repository;
-
-import java.util.List;
-
-@Repository
-public class PaymentAnalyticQdslOptimizationRepositoryImpl
-        extends BaseQdslEntityGraphSimpleJpaRepository<PaymentAnalyticEntity, UUID>
-        implements PaymentAnalyticQdslOptimizationRepository {
-
-    protected PaymentAnalyticQdslOptimizationRepositoryImpl(@NonNull EntityManager entityManager) {
-        super(PaymentAnalyticEntity.class, entityManager);
-    }
-
-    @Override
-    @NonNull
-    public List<PaymentAnalyticEntity> findAllWithFullEntityGraph(@NonNull Predicate predicate) {
-        return findAll(
-                predicate,
-                EntityGraph.EntityGraphType.LOAD,
-                entityManager.getEntityGraph(PaymentAnalyticEntity.ANALYTIC_FULL_ITEM_NAME_ENTITY_GRAPH)
-        );
+        return projections;
     }
 }
-```
 
-* * *
 
-### **Объяснение:**
-
-1.  **`BaseQdslEntityGraphSimpleJpaRepository`:**
-    
-    - Базовый класс, обрабатывающий запросы с QueryDSL и EntityGraph.
-    - Метод `findAll` использует `Predicate` для условий и `EntityGraph` для оптимизации загрузки.
-2.  **`QdslEntityGraphSimpleJpaRepository`:**
-    
-    - Интерфейс с контрактом для методов, работающих с QueryDSL и EntityGraph.
-3.  **`PaymentAnalyticQdslOptimizationRepository`:**
-    
-    - Расширяет базовый интерфейс для работы с сущностью `PaymentAnalyticEntity`.
-4.  **`PaymentAnalyticQdslOptimizationRepositoryImpl`:**
-    
-    - Реализует кастомный метод `findAllWithFullEntityGraph` для загрузки связанных данных аналитических сущностей.
-
-Если нужно добавить больше контекста или доработать код, дайте знать!
-
-### Код из предоставленных изображений
-
-#### **BaseReadOnlyRepository**
-
-```java
-@NoRepositoryBean
-public interface BaseReadOnlyRepository<T, ID extends Serializable>
-        extends Repository<T, ID>, QuerydslPredicateExecutor<T> {
-}
-```
-
-* * *
-
-#### **PaymentAnalyticRepository**
-
-```java
-public interface PaymentAnalyticRepository
-        extends BaseReadOnlyRepository<PaymentAnalyticEntity, UUID>,
-                QuerydslPredicateExecutor<PaymentAnalyticEntity>,
-                QPaymentAnalyticRepository {
-}
-```
-
-* * *
-
-#### **PaymentObjectRepository**
-
-```java
-public interface PaymentObjectRepository
-        extends BaseReadOnlyRepository<PaymentObjectEntity, UUID> {
-}
-```
-
-* * *
-
-#### **PaymentsSsrArticleRepository**
-
-```java
-public interface PaymentsSsrArticleRepository
-        extends BaseReadOnlyRepository<PaymentSsrArticleEntity, UUID> {
-}
-```
-
-* * *
-
-#### **Список методов BaseReadOnlyRepository**
-
-- **count()**
-- **count(Specification<t>)</t>**
-- **exists(Specification<t>)</t>**
-- **existsById(ID)**
-- **findAll()**
-- **findAll(Pageable)**
-- **findAll(Sort)**
-- **findAll(Specification<t>)</t>**
-- **findAll(Specification<t>, Pageable)</t>**
-- **findAll(Specification<t>, Sort)</t>**
-- **findAllById(Iterable<id>)</id>**
-- **findBy(Specification<t>, Function<...>)</t>**
-- **findById(ID)**
-- **findOne(Specification<t>)</t>**
-- **getReferenceById(ID)**
-
-* * *
-
-Если нужно обсудить функциональность или добавить новые методы/особенности, напишите!  
-Ваше задание можно сформулировать следующим образом:
-
-* * *
-
-### **Описание задачи**
-
-Необходимо реализовать метод для выполнения поискового запроса в базу данных с использованием Spring Data JPA и QueryDSL. Метод должен возвращать записи из сущности `tran_payment_analytic`, а также связанные с ней сущности (`tran_payment_object`, `tran_payment_ssr_article` и другие). В процессе выполнения запроса необходимо учитывать следующие аспекты:
-
-* * *
-
-### **Требования к реализации**
-
-1.  **Фильтрация данных:**
-    
-    - Ограничить записи на основании фильтров из объекта `request.filter`:
-        - Фильтр по `clientId` (из `request.filter.clientIds`) или по `organizationId` (из `roles[].organizationId`).
-        - Если отсутствует `loanFundsRequestStatuses`, ограничить записи по умолчанию — статусам из справочника `PF_LOAN_FUNDS_REQUEST`.
-    - Применить фильтрацию по статусам `tran_payment_analytic.status IN`.
-2.  **Постраничная выдача:**
-    
-    - Реализовать постраничный вывод данных в соответствии с параметрами `request.pagination`.
-    - Если параметры пагинации отсутствуют, использовать значения по умолчанию, определенные в `PaginationRequestDTO`.
-3.  **Выбор полей для ответа:**
-    
-    - Включить в ответ только те поля, чьи коды указаны в массиве `request.fields[]`. Если массив пустой, вернуть все доступные поля.
-4.  **Обработка связанных данных:**
-    
-    - Если поле `tran_payment_analytic.payment_document_id` заполнено:
-        - Собрать значения `payment_document_id` в массив `ids[]`.
-        - Выполнить REST API запрос для получения данных о статусах платежных поручений (`paymentOrderStatus`).
-        - Обогатить результирующий объект данными из API.
-5.  **Извлечение дополнительных данных:**
-    
-    - Из каждого элемента ответа извлечь поле `paymentOrders[].status` и обработать его.
-6.  **Сортировка:**
-    
-    - Если массив `request.sorting[]` пустой, отсортировать выборку по полю `DATE` в порядке убывания.
-
-* * *
-
-### **Ожидаемый результат**
-
-Реализованный метод должен:
-
-- Учитывать все указанные фильтры.
-- Поддерживать постраничный вывод.
-- Выполнять сортировку данных.
-- Подгружать связанные данные через REST API.
-- Возвращать только те поля, которые указаны в запросе, или все доступные, если ограничений нет.
-
-* * *
-
-Если нужно уточнить отдельные пункты или обсудить реализацию, дайте знать!
