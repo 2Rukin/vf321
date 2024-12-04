@@ -82,5 +82,26 @@ public class QuerydslProjectionMapper {
         return projections;
     }
 }
+public <T> Expression<?>[] mapFieldsToProjections(Class<E> entityClass, Class<T> dtoClass) {
+    List<Expression<?>> projections = new ArrayList<>();
+    PathBuilder<E> entityPath = new PathBuilder<>(entityClass, entityClass.getSimpleName().toLowerCase());
+
+    for (Method method : dtoClass.getDeclaredMethods()) {
+        if (method.getName().startsWith("get")) {
+            // Получение имени поля из метода
+            String fieldName = Character.toLowerCase(method.getName().charAt(3)) + method.getName().substring(4);
+            try {
+                // Маппинг поля QueryDSL с алиасом
+                Expression<?> fieldExpression = entityPath.get(fieldName);
+                projections.add(fieldExpression.as(fieldName));
+            } catch (IllegalArgumentException e) {
+                System.err.println("Field not found for method: " + method.getName());
+            }
+        }
+    }
+
+    // Возвращаем массив Expression<?>[]
+    return projections.toArray(new Expression<?>[0]);
+}
 
 
