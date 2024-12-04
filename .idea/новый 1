@@ -134,5 +134,47 @@ public <E> JPAQuery<E> applyJoinsFromGraph(
 }
 
 
+@Service
+public class PaymentAnalyticService {
+
+    private final QdslProjectionRepositoryImpl<PaymentAnalyticEntity> repository;
+
+    @Autowired
+    private EntityManager entityManager;
+
+    public PaymentAnalyticService(QdslProjectionRepositoryImpl<PaymentAnalyticEntity> repository) {
+        this.repository = repository;
+    }
+
+    public Page<PfLoanFundsRqRegistryItemDto> findAllWithPaginationAndFilters(
+            Predicate predicate,
+            Pageable pageable,
+            List<OrderSpecifier<?>> orderSpecifiers
+    ) {
+        // Ручное указание имени графа
+        String graphName = "PaymentAnalyticEntity.FULL_ANALYTIC_ENTITY_GRAPH";
+
+        // 1. Настраиваем проекции
+        Expression<?>[] projections = QProjectionUtil.mapFieldsToProjections(
+            PaymentAnalyticEntity.class,
+            PfLoanFundsRqRegistryItemDto.class
+        );
+
+        // 2. Настраиваем функцию проекции с учетом графа
+        Function<JPAQuery<PaymentAnalyticEntity>, JPAQuery<PfLoanFundsRqRegistryItemDto>> projectionFunction = query -> {
+            query.select(Projections.fields(PfLoanFundsRqRegistryItemDto.class, projections))
+                 .from(QPaymentAnalyticEntity.paymentAnalyticEntity);
+
+            // Применяем join на основе графа
+            QProjectionUtil.applyJoinsFromGraph(query, entityManager, graphName, QPaymentAnalyticEntity.paymentAnalyticEntity);
+
+            return query;
+        };
+
+        // 3. Вызываем универсальный метод репозитория
+        return repository.findAll(predicate, pageable, orderSpecifiers, projectionFunction);
+    }
+}
+
 
 
