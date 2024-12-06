@@ -1,7 +1,5 @@
 public static <E, T> Expression<?>[] mapFieldsToProjections(Class<E> entityClass, Class<T> dtoClass) {
     List<Expression<?>> projections = new ArrayList<>();
-
-    // Используем то же имя, которое указано в Q-классе, например "paymentAnalyticEntity"
     PathBuilder<E> entityPath = new PathBuilder<>(entityClass, "paymentAnalyticEntity");
 
     for (Method method : dtoClass.getDeclaredMethods()) {
@@ -10,21 +8,29 @@ public static <E, T> Expression<?>[] mapFieldsToProjections(Class<E> entityClass
             String fieldName = Character.toLowerCase(methodName.charAt(3)) + methodName.substring(4);
             try {
                 Class<?> dtoFieldType = method.getReturnType();
-                Field entityField = entityClass.getDeclaredField(fieldName);
-                entityField.setAccessible(true);
-                Class<?> entityFieldType = entityField.getType();
-
-                if (!dtoFieldType.equals(entityFieldType)) {
-                    throw new IllegalArgumentException(String.format(
-                        "Тип поля '%s' в сущности %s (%s) не совпадает с типом поля в %s (%s)",
-                        fieldName, entityClass.getSimpleName(), entityFieldType.getSimpleName(),
-                        dtoClass.getSimpleName(), dtoFieldType.getSimpleName()
+                if (isDtoClass(dtoFieldType)) { 
+                    // Если поле — вложенный DTO, обрабатываем его рекурсивно
+                    Field entityField = entityClass.getDeclaredField(fieldName);
+                    PathBuilder<?> relatedPath = entityPath.get(entityField.getName());
+                    projections.addAll(Arrays.asList(
+                        mapFieldsToProjections(relatedPath.getType(), dtoFieldType)
                     ));
-                }
+                } else {
+                    // Простое поле
+                    Field entityField = entityClass.getDeclaredField(fieldName);
+                    Class<?> entityFieldType = entityField.getType();
 
-                // Используем типизированный метод get, чтобы не получить Object
-                SimpleExpression<?> fieldExpression = entityPath.get(entityFieldType, fieldName);
-                projections.add(fieldExpression.as(fieldName));
+                    if (!dtoFieldType.equals(entityFieldType)) {
+                        throw new IllegalArgumentException(String.format(
+                            "Тип поля '%s' в сущности %s (%s) не совпадает с типом поля в %s (%s)",
+                            fieldName, entityClass.getSimpleName(), entityFieldType.getSimpleName(),
+                            dtoClass.getSimpleName(), dtoFieldType.getSimpleName()
+                        ));
+                    }
+
+                    SimpleExpression<?> fieldExpression = entityPath.get(entityFieldType, fieldName);
+                    projections.add(fieldExpression.as(fieldName));
+                }
             } catch (NoSuchFieldException e) {
                 throw new RuntimeException(String.format(
                     "В сущности %s отсутствует поле %s",
@@ -39,4 +45,9 @@ public static <E, T> Expression<?>[] mapFieldsToProjections(Class<E> entityClass
     }
 
     return projections.toArray(new Expression<?>[0]);
+}
+
+private static boolean isDtoClass(Class<?> clazz) {
+    // Условие, определяющее, является ли класс DTO (можно доработать)
+    return !clazz.isPrimitive() && !clazz.getName().startsWith("java.");
 }
