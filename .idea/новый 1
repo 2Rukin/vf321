@@ -1,53 +1,36 @@
-public static <E, T> Expression<?>[] mapFieldsToProjections(Class<E> entityClass, Class<T> dtoClass) {
+private Expression<?>[] getExpressions() {
     List<Expression<?>> projections = new ArrayList<>();
-    PathBuilder<E> entityPath = new PathBuilder<>(entityClass, "paymentAnalyticEntity");
+    PathBuilder<?> paymentAnalyticEntity = new PathBuilder<>(PaymentAnalyticEntity.class, "paymentAnalyticEntity");
+    PathBuilder<?> paymentObjectEntity = new PathBuilder<>(PaymentObjectEntity.class, "paymentObjectEntity");
+    PathBuilder<?> ssrArticleEntity = new PathBuilder<>(PaymentSsrArticleEntity.class, "ssrArticleEntity");
 
-    for (Method method : dtoClass.getDeclaredMethods()) {
-        String methodName = method.getName();
-        if (methodName.startsWith("get")) {
-            String fieldName = Character.toLowerCase(methodName.charAt(3)) + methodName.substring(4);
-            try {
-                Class<?> dtoFieldType = method.getReturnType();
-                if (isDtoClass(dtoFieldType)) { 
-                    // Если поле — вложенный DTO, обрабатываем его рекурсивно
-                    Field entityField = entityClass.getDeclaredField(fieldName);
-                    PathBuilder<?> relatedPath = entityPath.get(entityField.getName());
-                    projections.addAll(Arrays.asList(
-                        mapFieldsToProjections(relatedPath.getType(), dtoFieldType)
-                    ));
-                } else {
-                    // Простое поле
-                    Field entityField = entityClass.getDeclaredField(fieldName);
-                    Class<?> entityFieldType = entityField.getType();
+    // Поля основной сущности
+    projections.add(paymentAnalyticEntity.get("id", UUID.class).as("id"));
+    projections.add(paymentAnalyticEntity.get("clientId", UUID.class).as("clientId"));
+    projections.add(paymentAnalyticEntity.get("paymentDocumentId", UUID.class).as("paymentDocumentId"));
+    projections.add(paymentAnalyticEntity.get("number", Integer.class).as("number"));
+    projections.add(paymentAnalyticEntity.get("status", String.class).as("loanFundsRequestStatus"));
+    projections.add(paymentAnalyticEntity.get("date", LocalDate.class).as("date"));
+    projections.add(paymentAnalyticEntity.get("fundsType", String.class).as("fundsType"));
+    projections.add(paymentAnalyticEntity.get("creditAgreementNumber", String.class).as("creditAgreementNumber"));
+    projections.add(paymentAnalyticEntity.get("creditAgreementDate", LocalDate.class).as("creditAgreementDate"));
+    projections.add(paymentAnalyticEntity.get("payerAccount", String.class).as("payerAccount"));
+    projections.add(paymentAnalyticEntity.get("obcAccountFlag", Boolean.class).as("obcAccountFlag"));
+    projections.add(paymentAnalyticEntity.get("trancheIssueDate", LocalDate.class).as("trancheIssueDate"));
+    projections.add(paymentAnalyticEntity.get("amount", BigDecimal.class).as("amount"));
+    projections.add(paymentAnalyticEntity.get("paymentPurpose", String.class).as("paymentPurpose"));
+    projections.add(paymentAnalyticEntity.get("recipientName", String.class).as("recipientName"));
+    projections.add(paymentAnalyticEntity.get("recipientAccount", String.class).as("recipientAccount"));
+    projections.add(paymentAnalyticEntity.get("dvruNumber", String.class).as("dvruNumber"));
+    projections.add(paymentAnalyticEntity.get("dvruDate", LocalDate.class).as("dvruDate"));
+    projections.add(paymentAnalyticEntity.get("paymentType", String.class).as("paymentType"));
 
-                    if (!dtoFieldType.equals(entityFieldType)) {
-                        throw new IllegalArgumentException(String.format(
-                            "Тип поля '%s' в сущности %s (%s) не совпадает с типом поля в %s (%s)",
-                            fieldName, entityClass.getSimpleName(), entityFieldType.getSimpleName(),
-                            dtoClass.getSimpleName(), dtoFieldType.getSimpleName()
-                        ));
-                    }
+    // Поля связной сущности ssrArticleEntity
+    projections.add(ssrArticleEntity.get("code", String.class).as("code"));
 
-                    SimpleExpression<?> fieldExpression = entityPath.get(entityFieldType, fieldName);
-                    projections.add(fieldExpression.as(fieldName));
-                }
-            } catch (NoSuchFieldException e) {
-                throw new RuntimeException(String.format(
-                    "В сущности %s отсутствует поле %s",
-                    entityClass.getSimpleName(), fieldName
-                ), e);
-            } catch (IllegalArgumentException e) {
-                throw new EntityNotFoundException(String.format(
-                    "В QEntity класса %s не найдено поле %s для ResponseDto класса %s или не совпадают типы полей: %s",
-                    entityClass.getSimpleName(), fieldName, dtoClass.getSimpleName(), methodName), e);
-            }
-        }
-    }
+    // Поля связной сущности paymentObjectEntity
+    projections.add(paymentObjectEntity.get("name", String.class).as("name"));
+    projections.add(paymentObjectEntity.get("projectName", String.class).as("projectName"));
 
     return projections.toArray(new Expression<?>[0]);
-}
-
-private static boolean isDtoClass(Class<?> clazz) {
-    // Условие, определяющее, является ли класс DTO (можно доработать)
-    return !clazz.isPrimitive() && !clazz.getName().startsWith("java.");
 }
