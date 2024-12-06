@@ -34,3 +34,133 @@ private Expression<?>[] getExpressions() {
 
     return projections.toArray(new Expression<?>[0]);
 }
+
+import lombok.AllArgsConstructor;
+import lombok.Data;
+
+import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.util.Set;
+import java.util.UUID;
+
+@Data
+@AllArgsConstructor // Генерирует конструктор для всех полей
+public class PFLoanFundsRqRegistryItemDTO {
+    private UUID id;
+    private UUID clientId;
+    private UUID paymentDocumentId;
+    private Integer number;
+    private String status; // Enum заменён строкой для упрощения, можно оставить Enum, если требуется
+    private LocalDate date;
+    private String fundsType; // Enum заменён строкой
+    private String creditAgreementNumber;
+    private LocalDate creditAgreementDate;
+    private String payerAccount;
+    private Boolean obcAccountFlag;
+    private LocalDate trancheIssueDate;
+    private BigDecimal amount;
+    private String paymentPurpose;
+    private String recipientName;
+    private String recipientAccount;
+    private String dvruNumber;
+    private LocalDate dvruDate;
+    private String paymentType; // Enum заменён строкой
+    private Set<PaymentObjectDTO> paymentObjects;
+
+    @Data
+    @AllArgsConstructor
+    public static class PaymentObjectDTO {
+        private String name;
+        private String projectName;
+        private PaymentObjectSsrDTO paymentObjectSsr;
+    }
+
+    @Data
+    @AllArgsConstructor
+    public static class PaymentObjectSsrDTO {
+        private Set<PaymentSsrArticleDTO> paymentSsrArticles;
+    }
+
+    @Data
+    @AllArgsConstructor
+    public static class PaymentSsrArticleDTO {
+        private String code;
+    }
+}
+
+
+
+QPFLoanFundsRqRegistryItemBo qItem = QPFLoanFundsRqRegistryItemBo.pFLoanFundsRqRegistryItemBo;
+
+query.select(Projections.constructor(
+        PFLoanFundsRqRegistryItemDTO.class,
+        qItem.id,
+        qItem.clientId,
+        qItem.paymentDocumentId,
+        qItem.number,
+        qItem.status.stringValue(),
+        qItem.date,
+        qItem.fundsType.stringValue(),
+        qItem.creditAgreementNumber,
+        qItem.creditAgreementDate,
+        qItem.payerAccount,
+        qItem.obcAccountFlag,
+        qItem.trancheIssueDate,
+        qItem.amount,
+        qItem.paymentPurpose,
+        qItem.recipientName,
+        qItem.recipientAccount,
+        qItem.dvruNumber,
+        qItem.dvruDate,
+        qItem.paymentType.stringValue(),
+        Projections.constructor(
+                PFLoanFundsRqRegistryItemDTO.PaymentObjectDTO.class,
+                qItem.paymentObjects.any().name,
+                qItem.paymentObjects.any().projectName,
+                Projections.constructor(
+                        PFLoanFundsRqRegistryItemDTO.PaymentObjectSsrDTO.class,
+                        Projections.list(
+                                Projections.constructor(
+                                        PFLoanFundsRqRegistryItemDTO.PaymentSsrArticleDTO.class,
+                                        qItem.paymentObjects.any().paymentObjectSsr.paymentSsrArticles.any().code
+                                )
+                        )
+                )
+        )
+));
+
+
+import com.querydsl.jpa.impl.JPAQuery;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.Pageable;
+
+public Page<YourDTO> findAll(Predicate predicate, List<OrderSpecifier<?>> orders, Pageable pageable) {
+    // Инициализация JPAQuery
+    JPAQuery<YourDTO> query = new JPAQuery<>(entityManager);
+
+    // Конфигурация запроса
+    query.select(Projections.constructor(
+            YourDTO.class,
+            qEntity.field1,
+            qEntity.field2,
+            qEntity.nestedField
+    ))
+    .from(qEntity) // Укажите сущность
+    .where(predicate) // Добавьте предикат для фильтрации
+    .orderBy(orders.toArray(new OrderSpecifier<?>[0])) // Добавьте сортировку
+    .offset(pageable.getOffset()) // Примените смещение для пагинации
+    .limit(pageable.getPageSize()); // Примените лимит для пагинации
+
+    // Выполнение запроса и получение данных
+    List<YourDTO> content = query.fetch();
+
+    // Подсчёт общего количества записей
+    long total = query.fetchCount();
+
+    // Формирование результата в формате Page
+    return new PageImpl<>(content, pageable, total);
+}
+
+
+
