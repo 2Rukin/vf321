@@ -1,35 +1,40 @@
 public static <E, T> Expression<?>[] mapFieldsToProjections(Class<E> entityClass, Class<T> dtoClass) {
     List<Expression<?>> projections = new ArrayList<>();
-    PathBuilder<E> entityPath = new PathBuilder<>(entityClass, entityClass.getSimpleName().toLowerCase());
+
+    // Используем то же имя, которое указано в Q-классе, например "paymentAnalyticEntity"
+    PathBuilder<E> entityPath = new PathBuilder<>(entityClass, "paymentAnalyticEntity");
 
     for (Method method : dtoClass.getDeclaredMethods()) {
         String methodName = method.getName();
         if (methodName.startsWith("get")) {
             String fieldName = Character.toLowerCase(methodName.charAt(3)) + methodName.substring(4);
-            Class<?> dtoFieldType = method.getReturnType();
-
-            Field entityField;
             try {
-                entityField = entityClass.getDeclaredField(fieldName);
+                Class<?> dtoFieldType = method.getReturnType();
+                Field entityField = entityClass.getDeclaredField(fieldName);
+                entityField.setAccessible(true);
+                Class<?> entityFieldType = entityField.getType();
+
+                if (!dtoFieldType.equals(entityFieldType)) {
+                    throw new IllegalArgumentException(String.format(
+                        "Тип поля '%s' в сущности %s (%s) не совпадает с типом поля в %s (%s)",
+                        fieldName, entityClass.getSimpleName(), entityFieldType.getSimpleName(),
+                        dtoClass.getSimpleName(), dtoFieldType.getSimpleName()
+                    ));
+                }
+
+                // Используем типизированный метод get, чтобы не получить Object
+                SimpleExpression<?> fieldExpression = entityPath.get(entityFieldType, fieldName);
+                projections.add(fieldExpression.as(fieldName));
             } catch (NoSuchFieldException e) {
+                throw new RuntimeException(String.format(
+                    "В сущности %s отсутствует поле %s",
+                    entityClass.getSimpleName(), fieldName
+                ), e);
+            } catch (IllegalArgumentException e) {
                 throw new EntityNotFoundException(String.format(
-                    "В сущности %s не найдено поле %s, соответствующее полю в DTO %s: %s",
+                    "В QEntity класса %s не найдено поле %s для ResponseDto класса %s или не совпадают типы полей: %s",
                     entityClass.getSimpleName(), fieldName, dtoClass.getSimpleName(), methodName), e);
             }
-
-            Class<?> entityFieldType = entityField.getType();
-            if (!dtoFieldType.equals(entityFieldType)) {
-                throw new IllegalArgumentException(String.format(
-                    "Тип поля '%s' в сущности %s (%s) не совпадает с типом поля в %s (%s)",
-                    fieldName, entityClass.getSimpleName(), entityFieldType.getSimpleName(),
-                    dtoClass.getSimpleName(), dtoFieldType.getSimpleName()
-                ));
-            }
-
-            // Вызываем метод get с корректным порядком аргументов
-            Path<?> fieldPath = entityPath.get((Class<?>) entityFieldType, fieldName);
-
-            projections.add(fieldPath.as(fieldName));
         }
     }
 
