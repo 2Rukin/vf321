@@ -8,7 +8,6 @@ public static <E, T> Expression<?>[] mapFieldsToProjections(Class<E> entityClass
             String fieldName = Character.toLowerCase(methodName.charAt(3)) + methodName.substring(4);
             Class<?> dtoFieldType = method.getReturnType();
 
-            // Попытка определить тип поля сущности
             Field entityField;
             try {
                 entityField = entityClass.getDeclaredField(fieldName);
@@ -27,11 +26,10 @@ public static <E, T> Expression<?>[] mapFieldsToProjections(Class<E> entityClass
                 ));
             }
 
-            // Создание типизированного выражения
-            @SuppressWarnings("unchecked")
-            SimpleExpression<?> fieldExpression = (SimpleExpression<?>) entityPath.get(entityFieldType, fieldName);
+            // Вызываем метод get с корректным порядком аргументов
+            Path<?> fieldPath = entityPath.get((Class<?>) entityFieldType, fieldName);
 
-            projections.add(fieldExpression.as(fieldName));
+            projections.add(fieldPath.as(fieldName));
         }
     }
 
