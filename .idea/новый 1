@@ -162,5 +162,76 @@ public Page<YourDTO> findAll(Predicate predicate, List<OrderSpecifier<?>> orders
     return new PageImpl<>(content, pageable, total);
 }
 
+@ExtendWith(MockitoExtension.class)
+class PaymentAnalyticServiceTest {
+
+    @Mock
+    private PaymentAnalyticRepository paymentAnalyticRepository;
+
+    @InjectMocks
+    private PaymentAnalyticService paymentAnalyticService;
+
+    @Test
+    void countByStatus_shouldReturnCorrectResultsWithNullCounts() {
+        // Исходные данные
+        UUID clientId = UUID.randomUUID();
+        Set<UUID> organizationIds = Set.of(UUID.randomUUID());
+        Set<String> nullCountStatuses = Set.of("REJECTED", "EXECUTED", "DRAFT", "REVOKED");
+
+        // Мок данных для репозитория (Tuple: статус и подсчет)
+        List<Tuple> mockedTuples = List.of(
+                mockTuple("APPROVAL", 5),
+                mockTuple("DRAFT", 3),
+                mockTuple("REVOKED", 2),
+                mockTuple("IN_TRANCHE", 4),
+                mockTuple("REJECTED", 1),
+                mockTuple("EXECUTED", 0)
+        );
+
+        // Подготовка мока репозитория
+        when(paymentAnalyticRepository.countByPredicate(any(), any(), any()))
+                .thenReturn(mockedTuples);
+
+        // Ожидаемые данные (DTO, которые должны быть получены после преобразования)
+        List<StatusCountDto> expectedDtos = List.of(
+                new StatusCountDto("APPROVAL", 5),
+                new StatusCountDto("IN_TRANCHE", 4),
+                new StatusCountDto("REJECTED", null),
+                new StatusCountDto("DRAFT", null),
+                new StatusCountDto("REVOKED", null),
+                new StatusCountDto("EXECUTED", null)
+        );
+
+        // Вызов метода
+        List<StatusCountDto> result = paymentAnalyticService.countByStatus(clientId, organizationIds);
+
+        // Проверка результата
+        assertNotNull(result, "Результат не должен быть null");
+        assertEquals(expectedDtos.size(), result.size(), "Размер результата должен совпадать с ожидаемым");
+
+        for (int i = 0; i < result.size(); i++) {
+            StatusCountDto actualDto = result.get(i);
+            StatusCountDto expectedDto = expectedDtos.get(i);
+
+            // Проверка, что статус соответствует
+            assertEquals(expectedDto.getStatus(), actualDto.getStatus(), "Статус должен совпадать");
+
+            // Проверка, что count соответствует
+            if (expectedDto.getCount() == null) {
+                assertNull(actualDto.getCount(), "Count должен быть null для статуса " + actualDto.getStatus());
+            } else {
+                assertEquals(expectedDto.getCount(), actualDto.getCount(), "Count должен совпадать для статуса " + actualDto.getStatus());
+            }
+        }
+    }
+
+    // Хелпер для мокирования Tuple
+    private Tuple mockTuple(String status, int count) {
+        Tuple tuple = mock(Tuple.class);
+        when(tuple.get(paymentAnalyticEntity.status)).thenReturn(status);
+        when(tuple.get(paymentAnalyticEntity.id.count())).thenReturn(count);
+        return tuple;
+    }
+}
 
 
