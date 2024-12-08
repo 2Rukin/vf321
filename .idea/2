@@ -1,10 +1,11 @@
-for (StatusCountDto expectedDto : expected) {
-    // Проверяем, что результат содержит элемент, соответствующий ожидаемому DTO
-    assertTrue(result.stream().anyMatch(tuple -> {
-        String status = tuple.get(qPaymentAnalyticEntity.status);
-        Long count = tuple.get(qPaymentAnalyticEntity.id.count());
+for (Tuple expectedTuple : expectedTuples) {
+    // Проверяем, что результат содержит элемент, соответствующий ожидаемому Tuple
+    assertTrue(tuples.stream().anyMatch(tuple -> {
+        String status = tuple.get(paymentAnalyticEntity.status);
+        Long count = tuple.get(paymentAnalyticEntity.id.count());
 
-        return expectedDto.getStatus().equals(status) && 
-               expectedDto.getCount().equals(count.intValue()); // Приводим Long count к Integer для сравнения
-    }), "Результат должен содержать " + expectedDto);
+        return expectedTuple.get(paymentAnalyticEntity.status).equals(status) &&
+               expectedTuple.get(paymentAnalyticEntity.id.count()).equals(count);
+    }), "Результат должен содержать статус " + expectedTuple.get(paymentAnalyticEntity.status)
+        + " с count = " + expectedTuple.get(paymentAnalyticEntity.id.count());
 }
