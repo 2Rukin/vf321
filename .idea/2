@@ -1,55 +1,10 @@
-@Test
-void givenNullCountStatusesOnly_whenCountByStatus_thenAllCountsAreNull() {
-    // Исходные данные
-    UUID clientId = UUID.randomUUID();
-    Set<UUID> organizationIds = Set.of(UUID.randomUUID());
+for (StatusCountDto expectedDto : expected) {
+    // Проверяем, что результат содержит элемент, соответствующий ожидаемому DTO
+    assertTrue(result.stream().anyMatch(tuple -> {
+        String status = tuple.get(qPaymentAnalyticEntity.status);
+        Long count = tuple.get(qPaymentAnalyticEntity.id.count());
 
-    // Мокированные данные
-    List<Tuple> mockedTuples = List.of(
-            mockTuple("REJECTED", 1L),
-            mockTuple("EXECUTED", 2L),
-            mockTuple("DRAFT", 3L),
-            mockTuple("REVOKED", 4L)
-    );
-
-    when(paymentAnalyticRepository.countByPredicate(any(), any(), any()))
-            .thenReturn(mockedTuples);
-
-    // Вызов тестируемого метода
-    List<StatusCountDto> countByStatusResult = paymentAnalyticService.countByStatus(clientId, organizationIds);
-
-    // Проверки
-    assertNotNull(countByStatusResult, "Результат не должен быть null");
-    assertEquals(mockedTuples.size(), countByStatusResult.size(), "Размер результата должен совпадать с размером мокированных данных");
-
-    for (StatusCountDto dto : countByStatusResult) {
-        assertNull(dto.getCount(), "Count должен быть null для статуса " + dto.getStatus());
-    }
+        return expectedDto.getStatus().equals(status) && 
+               expectedDto.getCount().equals(count.intValue()); // Приводим Long count к Integer для сравнения
+    }), "Результат должен содержать " + expectedDto);
 }
-
-@Test
-void givenClientIdIsNull_whenCountByStatus_thenRepositoryCalledWithNullClientId() {
-    // Исходные данные
-    UUID clientId = null;
-    Set<UUID> organizationIds = Set.of(UUID.randomUUID());
-
-    // Мокированные данные
-    List<Tuple> mockedTuples = List.of(
-            mockTuple("APPROVAL", 5L)
-    );
-
-    when(paymentAnalyticRepository.countByPredicate(any(), any(), any()))
-            .thenReturn(mockedTuples);
-
-    // Вызов тестируемого метода
-    List<StatusCountDto> countByStatusResult = paymentAnalyticService.countByStatus(clientId, organizationIds);
-
-    // Проверки
-    assertNotNull(countByStatusResult, "Результат не должен быть null");
-    assertEquals(1, countByStatusResult.size(), "Должен быть один результат");
-
-    StatusCountDto dto = countByStatusResult.get(0);
-    assertEquals("APPROVAL", dto.getStatus(), "Статус должен быть APPROVAL");
-    assertEquals(5, dto.getCount(), "Count должен быть 5");
-}
-
