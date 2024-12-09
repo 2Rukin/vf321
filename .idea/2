@@ -86,4 +86,22 @@ public class QJoinService {
             default -> throw new IllegalArgumentException("Unsupported join type: " + joinType);
         }
     }
+
+    /**
+ * Создаёт карту соединений для использования в QueryDSL.
+ *
+ * @param root  Корневой путь (например, главная сущность запроса).
+ * @param joins Список описаний соединений.
+ * @param <C>   Тип пути корневой сущности.
+ * @param <P>   Тип целевых сущностей в соединениях.
+ * @return Карта соединений, где ключи — пути, а значения — описания соединений.
+ */
+public <C, P> Map<Path<? extends C>, QJoinService.JoinDescription<C, P>> createJoinMap(
+    Path<C> root,
+    List<QJoinService.JoinDescription<C, P>> joins
+) {
+    Map<Path<? extends C>, QJoinService.JoinDescription<C, P>> joinMap = new HashMap<>();
+    joins.forEach(join -> joinMap.put(join.path(), join));
+    return joinMap;
+}
 }
