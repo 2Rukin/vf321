@@ -1,11 +1,81 @@
-for (Tuple expectedTuple : expectedTuples) {
-    // Проверяем, что результат содержит элемент, соответствующий ожидаемому Tuple
-    assertTrue(tuples.stream().anyMatch(tuple -> {
-        String status = tuple.get(paymentAnalyticEntity.status);
-        Long count = tuple.get(paymentAnalyticEntity.id.count());
+import com.querydsl.core.types.Path;
+import com.querydsl.core.types.dsl.CollectionPath;
+import com.querydsl.core.types.dsl.EntityPathBase;
+import com.querydsl.jpa.JPQLQuery;
 
-        return expectedTuple.get(paymentAnalyticEntity.status).equals(status) &&
-               expectedTuple.get(paymentAnalyticEntity.id.count()).equals(count);
-    }), "Результат должен содержать статус " + expectedTuple.get(paymentAnalyticEntity.status)
-        + " с count = " + expectedTuple.get(paymentAnalyticEntity.id.count());
+import java.util.List;
+import java.util.Map;
+
+public interface JoinService {
+
+    /**
+     * Рекорд для описания джоинов.
+     */
+    record JoinDescription(Object path, Path<?> alias, JoinType joinType) {}
+
+    /**
+     * Создаёт карту джоинов на основе корневой сущности и списка описаний.
+     *
+     * @param root корневая сущность.
+     * @param joins список описаний джоинов.
+     * @return карта джоинов.
+     */
+    Map<Object, JoinDescription> createJoinMap(EntityPathBase<?> root, List<JoinDescription> joins);
+
+    /**
+     * Применяет джоины к запросу.
+     *
+     * @param query   JPQLQuery, к которому нужно добавить джоины.
+     * @param joinMap карта джоинов.
+     * @return модифицированный JPQLQuery.
+     */
+    <T> JPQLQuery<T> applyJoins(JPQLQuery<T> query, Map<Object, JoinDescription> joinMap);
 }
+
+import com.querydsl.core.types.Path;
+import com.querydsl.core.types.dsl.CollectionPath;
+import com.querydsl.core.types.dsl.EntityPathBase;
+import com.querydsl.jpa.JPQLQuery;
+
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+public class JoinServiceImpl implements JoinService {
+
+    @Override
+    public Map<Object, JoinDescription> createJoinMap(EntityPathBase<?> root, List<JoinDescription> joins) {
+        Map<Object, JoinDescription> joinMap = new HashMap<>();
+
+        for (JoinDescription join : joins) {
+            joinMap.put(join.path(), join);
+        }
+
+        return joinMap;
+    }
+
+    @Override
+    public <T> JPQLQuery<T> applyJoins(JPQLQuery<T> query, Map<Object, JoinDescription> joinMap) {
+        joinMap.forEach((key, joinDescription) -> {
+            JoinType joinType = joinDescription.joinType();
+            Path<?> alias = joinDescription.alias();
+
+            if (key instanceof EntityPathBase<?>) {
+                switch (joinType) {
+                    case LEFT -> query.leftJoin((EntityPathBase<?>) key, alias);
+                    case RIGHT -> query.rightJoin((EntityPathBase<?>) key, alias);
+                    case INNER -> query.join((EntityPathBase<?>) key, alias);
+                }
+            } else if (key instanceof CollectionPath<?, ?>) {
+                switch (joinType) {
+                    case LEFT -> query.leftJoin((CollectionPath<?, ?>) key, alias);
+                    case RIGHT -> query.rightJoin((CollectionPath<?, ?>) key, alias);
+                    case INNER -> query.join((CollectionPath<?, ?>) key, alias);
+                }
+            }
+        });
+
+        return query;
+    }
+}
+
