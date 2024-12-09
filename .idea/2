@@ -1,40 +1,7 @@
 import com.querydsl.core.types.Path;
 import com.querydsl.core.types.dsl.CollectionPath;
-import com.querydsl.core.types.dsl.EntityPathBase;
-import com.querydsl.jpa.JPQLQuery;
-
-import java.util.List;
-import java.util.Map;
-
-public interface JoinService {
-
-    /**
-     * Рекорд для описания джоинов.
-     */
-    record JoinDescription(Object path, Path<?> alias, JoinType joinType) {}
-
-    /**
-     * Создаёт карту джоинов на основе корневой сущности и списка описаний.
-     *
-     * @param root корневая сущность.
-     * @param joins список описаний джоинов.
-     * @return карта джоинов.
-     */
-    Map<Object, JoinDescription> createJoinMap(EntityPathBase<?> root, List<JoinDescription> joins);
-
-    /**
-     * Применяет джоины к запросу.
-     *
-     * @param query   JPQLQuery, к которому нужно добавить джоины.
-     * @param joinMap карта джоинов.
-     * @return модифицированный JPQLQuery.
-     */
-    <T> JPQLQuery<T> applyJoins(JPQLQuery<T> query, Map<Object, JoinDescription> joinMap);
-}
-
-import com.querydsl.core.types.Path;
-import com.querydsl.core.types.dsl.CollectionPath;
-import com.querydsl.core.types.dsl.EntityPathBase;
+import com.querydsl.core.types.dsl.EntityPath;
+import com.querydsl.core.types.dsl.MapExpression;
 import com.querydsl.jpa.JPQLQuery;
 
 import java.util.HashMap;
@@ -44,10 +11,10 @@ import java.util.Map;
 public class JoinServiceImpl implements JoinService {
 
     @Override
-    public Map<Object, JoinDescription> createJoinMap(EntityPathBase<?> root, List<JoinDescription> joins) {
-        Map<Object, JoinDescription> joinMap = new HashMap<>();
+    public <P> Map<EntityPath<P>, JoinDescription<P>> createJoinMap(EntityPath<P> root, List<JoinDescription<P>> joins) {
+        Map<EntityPath<P>, JoinDescription<P>> joinMap = new HashMap<>();
 
-        for (JoinDescription join : joins) {
+        for (JoinDescription<P> join : joins) {
             joinMap.put(join.path(), join);
         }
 
@@ -55,27 +22,84 @@ public class JoinServiceImpl implements JoinService {
     }
 
     @Override
-    public <T> JPQLQuery<T> applyJoins(JPQLQuery<T> query, Map<Object, JoinDescription> joinMap) {
+    public <T, P> JPQLQuery<T> applyJoins(JPQLQuery<T> query, Map<EntityPath<P>, JoinDescription<P>> joinMap) {
         joinMap.forEach((key, joinDescription) -> {
             JoinType joinType = joinDescription.joinType();
-            Path<?> alias = joinDescription.alias();
+            Path<P> alias = joinDescription.alias();
 
-            if (key instanceof EntityPathBase<?>) {
+            if (key instanceof EntityPath<?>) {
+                EntityPath<P> entityPath = key;
+
                 switch (joinType) {
-                    case LEFT -> query.leftJoin((EntityPathBase<?>) key, alias);
-                    case RIGHT -> query.rightJoin((EntityPathBase<?>) key, alias);
-                    case INNER -> query.join((EntityPathBase<?>) key, alias);
+                    case LEFT -> query.leftJoin(entityPath, alias);
+                    case RIGHT -> query.rightJoin(entityPath, alias);
+                    case INNER -> query.join(entityPath, alias);
                 }
             } else if (key instanceof CollectionPath<?, ?>) {
+                CollectionPath<P, ?> collectionPath = (CollectionPath<P, ?>) key;
+
                 switch (joinType) {
-                    case LEFT -> query.leftJoin((CollectionPath<?, ?>) key, alias);
-                    case RIGHT -> query.rightJoin((CollectionPath<?, ?>) key, alias);
-                    case INNER -> query.join((CollectionPath<?, ?>) key, alias);
+                    case LEFT -> query.leftJoin(collectionPath, alias);
+                    case RIGHT -> query.rightJoin(collectionPath, alias);
+                    case INNER -> query.join(collectionPath, alias);
                 }
+            } else if (key instanceof MapExpression<?, ?>) {
+                MapExpression<P, ?> mapExpression = (MapExpression<P, ?>) key;
+
+                switch (joinType) {
+                    case LEFT -> query.leftJoin(mapExpression, alias);
+                    case RIGHT -> query.rightJoin(mapExpression, alias);
+                    case INNER -> query.join(mapExpression, alias);
+                }
+            } else {
+                throw new IllegalArgumentException("Unsupported join type for key: " + key.getClass().getName());
             }
         });
 
         return query;
     }
 }
+import com.querydsl.core.types.Path;
+import com.querydsl.core.types.dsl.EntityPathBase;
+import com.querydsl.jpa.JPQLQuery;
 
+import java.util.List;
+import java.util.Map;
+
+/**
+ * Сервис для работы с джоинами в QueryDSL.
+ */
+public interface JoinService {
+
+    /**
+     * Рекорд для описания джоинов с параметризацией.
+     *
+     * @param <P> Тип сущности, связанной с джоином.
+     */
+    record JoinDescription<P>(
+        EntityPath<P> path, // Путь к сущности/коллекции.
+        Path<P> alias,      // Псевдоним для джоина.
+        JoinType joinType   // Тип соединения (LEFT, RIGHT, INNER).
+    ) {}
+
+    /**
+     * Создаёт карту джоинов для переданной корневой сущности.
+     *
+     * @param root Корневая сущность.
+     * @param joins Список описаний джоинов.
+     * @param <P> Тип сущности.
+     * @return Карта джоинов, где ключом является EntityPath, а значением описание джоина.
+     */
+    <P> Map<EntityPath<P>, JoinDescription<P>> createJoinMap(EntityPath<P> root, List<JoinDescription<P>> joins);
+
+    /**
+     * Применяет джоины к запросу.
+     *
+     * @param query JPQLQuery, к которому нужно добавить джоины.
+     * @param joinMap Карта джоинов.
+     * @param <T> Тип результата запроса.
+     * @param <P> Тип сущности, связанной с джоинами.
+     * @return Модифицированный JPQLQuery.
+     */
+    <T, P> JPQLQuery<T> applyJoins(JPQLQuery<T> query, Map<EntityPath<P>, JoinDescription<P>> joinMap);
+}
