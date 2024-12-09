@@ -1,105 +1,83 @@
 import com.querydsl.core.types.Path;
-import com.querydsl.core.types.dsl.CollectionPath;
-import com.querydsl.core.types.dsl.EntityPath;
-import com.querydsl.core.types.dsl.MapExpression;
 import com.querydsl.jpa.JPQLQuery;
 
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-public class JoinServiceImpl implements JoinService {
+/**
+ * Сервис для управления соединениями (джоинами) в QueryDSL.
+ */
+public class QJoinService {
 
-    @Override
-    public <P> Map<EntityPath<P>, JoinDescription<P>> createJoinMap(EntityPath<P> root, List<JoinDescription<P>> joins) {
-        Map<EntityPath<P>, JoinDescription<P>> joinMap = new HashMap<>();
+    /**
+     * Класс, описывающий параметры соединения.
+     *
+     * @param path     Путь к ассоциированному объекту.
+     * @param alias    Алиас для соединения.
+     * @param joinType Тип соединения (LEFT, RIGHT, INNER).
+     * @param <P>      Тип сущности, к которой выполняется соединение.
+     */
+    public record JoinDescription<P>(
+        Path<? extends P> path,   // Путь к ассоциированному объекту
+        Path<P> alias,           // Алиас для соединения
+        JoinType joinType         // Тип соединения (LEFT, RIGHT, INNER)
+    ) {}
 
-        for (JoinDescription<P> join : joins) {
-            joinMap.put(join.path(), join);
-        }
-
+    /**
+     * Создаёт карту соединений (джоинов) на основе корневого пути и списка описаний соединений.
+     *
+     * @param root  Корневая сущность (путь).
+     * @param joins Список описаний соединений.
+     * @param <P>   Тип сущности корневого пути.
+     * @return Карта соединений.
+     */
+    public <P> Map<Path<? extends P>, JoinDescription<P>> createJoinMap(
+        Path<P> root,
+        List<JoinDescription<P>> joins
+    ) {
+        Map<Path<? extends P>, JoinDescription<P>> joinMap = new HashMap<>();
+        joins.forEach(join -> joinMap.put(join.path(), join));
         return joinMap;
     }
 
-    @Override
-    public <T, P> JPQLQuery<T> applyJoins(JPQLQuery<T> query, Map<EntityPath<P>, JoinDescription<P>> joinMap) {
+    /**
+     * Применяет соединения (джоины) к запросу.
+     *
+     * @param query   Запрос QueryDSL, к которому нужно добавить соединения.
+     * @param joinMap Карта соединений, где ключи — пути, а значения — описания соединений.
+     * @param <T>     Тип результата запроса.
+     * @param <P>     Тип сущности соединения.
+     * @return Модифицированный запрос с добавленными соединениями.
+     */
+    public <T, P> JPQLQuery<T> applyJoins(JPQLQuery<T> query, Map<Path<? extends P>, JoinDescription<P>> joinMap) {
         joinMap.forEach((key, joinDescription) -> {
             JoinType joinType = joinDescription.joinType();
             Path<P> alias = joinDescription.alias();
 
-            if (key instanceof EntityPath<?>) {
-                EntityPath<P> entityPath = key;
-
-                switch (joinType) {
-                    case LEFT -> query.leftJoin(entityPath, alias);
-                    case RIGHT -> query.rightJoin(entityPath, alias);
-                    case INNER -> query.join(entityPath, alias);
-                }
-            } else if (key instanceof CollectionPath<?, ?>) {
-                CollectionPath<P, ?> collectionPath = (CollectionPath<P, ?>) key;
-
-                switch (joinType) {
-                    case LEFT -> query.leftJoin(collectionPath, alias);
-                    case RIGHT -> query.rightJoin(collectionPath, alias);
-                    case INNER -> query.join(collectionPath, alias);
-                }
-            } else if (key instanceof MapExpression<?, ?>) {
-                MapExpression<P, ?> mapExpression = (MapExpression<P, ?>) key;
-
-                switch (joinType) {
-                    case LEFT -> query.leftJoin(mapExpression, alias);
-                    case RIGHT -> query.rightJoin(mapExpression, alias);
-                    case INNER -> query.join(mapExpression, alias);
-                }
-            } else {
-                throw new IllegalArgumentException("Unsupported join type for key: " + key.getClass().getName());
-            }
+            // Универсальная обработка для всех типов Path
+            applyJoin(query, key, alias, joinType);
         });
 
         return query;
     }
-}
-import com.querydsl.core.types.Path;
-import com.querydsl.core.types.dsl.EntityPathBase;
-import com.querydsl.jpa.JPQLQuery;
-
-import java.util.List;
-import java.util.Map;
-
-/**
- * Сервис для работы с джоинами в QueryDSL.
- */
-public interface JoinService {
 
     /**
-     * Рекорд для описания джоинов с параметризацией.
+     * Универсальный метод для применения соединения к запросу.
      *
-     * @param <P> Тип сущности, связанной с джоином.
+     * @param query     Запрос QueryDSL.
+     * @param path      Путь к ассоциированной сущности.
+     * @param alias     Алиас для соединения.
+     * @param joinType  Тип соединения (LEFT, RIGHT, INNER).
+     * @param <T>       Тип результата запроса.
+     * @param <P>       Тип сущности соединения.
      */
-    record JoinDescription<P>(
-        EntityPath<P> path, // Путь к сущности/коллекции.
-        Path<P> alias,      // Псевдоним для джоина.
-        JoinType joinType   // Тип соединения (LEFT, RIGHT, INNER).
-    ) {}
-
-    /**
-     * Создаёт карту джоинов для переданной корневой сущности.
-     *
-     * @param root Корневая сущность.
-     * @param joins Список описаний джоинов.
-     * @param <P> Тип сущности.
-     * @return Карта джоинов, где ключом является EntityPath, а значением описание джоина.
-     */
-    <P> Map<EntityPath<P>, JoinDescription<P>> createJoinMap(EntityPath<P> root, List<JoinDescription<P>> joins);
-
-    /**
-     * Применяет джоины к запросу.
-     *
-     * @param query JPQLQuery, к которому нужно добавить джоины.
-     * @param joinMap Карта джоинов.
-     * @param <T> Тип результата запроса.
-     * @param <P> Тип сущности, связанной с джоинами.
-     * @return Модифицированный JPQLQuery.
-     */
-    <T, P> JPQLQuery<T> applyJoins(JPQLQuery<T> query, Map<EntityPath<P>, JoinDescription<P>> joinMap);
+    private <T, P> void applyJoin(JPQLQuery<T> query, Path<? extends P> path, Path<P> alias, JoinType joinType) {
+        switch (joinType) {
+            case LEFT -> query.leftJoin(path, alias);
+            case RIGHT -> query.rightJoin(path, alias);
+            case INNER -> query.join(path, alias);
+            default -> throw new IllegalArgumentException("Unsupported join type: " + joinType);
+        }
+    }
 }
