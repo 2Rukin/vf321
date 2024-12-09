@@ -1,9 +1,8 @@
 import com.querydsl.core.types.Path;
+import com.querydsl.core.types.dsl.*;
 import com.querydsl.jpa.JPQLQuery;
 
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 
 /**
  * Сервис для управления соединениями (джоинами) в QueryDSL.
@@ -13,66 +12,73 @@ public class QJoinService {
     /**
      * Класс, описывающий параметры соединения.
      *
-     * @param path     Путь к ассоциированному объекту.
+     * @param path     Путь к ассоциированному объекту (может быть CollectionPath, EntityPath и т.д.).
      * @param alias    Алиас для соединения.
      * @param joinType Тип соединения (LEFT, RIGHT, INNER).
-     * @param <P>      Тип сущности, к которой выполняется соединение.
+     * @param <C>      Тип коллекции или сущности.
+     * @param <P>      Тип целевой сущности.
      */
-    public record JoinDescription<P>(
-        Path<? extends P> path,   // Путь к ассоциированному объекту
-        Path<P> alias,           // Алиас для соединения
-        JoinType joinType         // Тип соединения (LEFT, RIGHT, INNER)
+    public record JoinDescription<C, P>(
+        Path<C> path,
+        Path<P> alias,
+        JoinType joinType
     ) {}
-
-    /**
-     * Создаёт карту соединений (джоинов) на основе корневого пути и списка описаний соединений.
-     *
-     * @param root  Корневая сущность (путь).
-     * @param joins Список описаний соединений.
-     * @param <P>   Тип сущности корневого пути.
-     * @return Карта соединений.
-     */
-    public <P> Map<Path<? extends P>, JoinDescription<P>> createJoinMap(
-        Path<P> root,
-        List<JoinDescription<P>> joins
-    ) {
-        Map<Path<? extends P>, JoinDescription<P>> joinMap = new HashMap<>();
-        joins.forEach(join -> joinMap.put(join.path(), join));
-        return joinMap;
-    }
 
     /**
      * Применяет соединения (джоины) к запросу.
      *
-     * @param query   Запрос QueryDSL, к которому нужно добавить соединения.
-     * @param joinMap Карта соединений, где ключи — пути, а значения — описания соединений.
-     * @param <T>     Тип результата запроса.
-     * @param <P>     Тип сущности соединения.
+     * @param query            Запрос QueryDSL, к которому нужно добавить соединения.
+     * @param joinDescriptions Список описаний соединений.
+     * @param <T>              Тип результата запроса.
      * @return Модифицированный запрос с добавленными соединениями.
      */
-    public <T, P> JPQLQuery<T> applyJoins(JPQLQuery<T> query, Map<Path<? extends P>, JoinDescription<P>> joinMap) {
-        joinMap.forEach((key, joinDescription) -> {
-            JoinType joinType = joinDescription.joinType();
-            Path<P> alias = joinDescription.alias();
-
-            // Универсальная обработка для всех типов Path
-            applyJoin(query, key, alias, joinType);
-        });
-
+    public <T> JPQLQuery<T> applyJoins(JPQLQuery<T> query, List<JoinDescription<?, ?>> joinDescriptions) {
+        for (JoinDescription<?, ?> joinDescription : joinDescriptions) {
+            applyJoin(query, joinDescription);
+        }
         return query;
     }
 
     /**
-     * Универсальный метод для применения соединения к запросу.
+     * Универсальный метод для применения соединения на основе описания.
      *
-     * @param query     Запрос QueryDSL.
-     * @param path      Путь к ассоциированной сущности.
-     * @param alias     Алиас для соединения.
-     * @param joinType  Тип соединения (LEFT, RIGHT, INNER).
-     * @param <T>       Тип результата запроса.
-     * @param <P>       Тип сущности соединения.
+     * @param query           Запрос QueryDSL.
+     * @param joinDescription Описание соединения.
+     * @param <T>             Тип результата запроса.
+     * @param <C>             Тип коллекции или сущности.
+     * @param <P>             Тип целевой сущности.
      */
-    private <T, P> void applyJoin(JPQLQuery<T> query, Path<? extends P> path, Path<P> alias, JoinType joinType) {
+    private <T, C, P> void applyJoin(JPQLQuery<T> query, JoinDescription<C, P> joinDescription) {
+        Path<C> path = joinDescription.path();
+        Path<P> alias = joinDescription.alias();
+        JoinType joinType = joinDescription.joinType();
+
+        // Определяем тип соединения в зависимости от пути
+        if (path instanceof CollectionExpression<?, ?>) {
+            applyCollectionJoin(query, (CollectionExpression<?, P>) path, alias, joinType);
+        } else if (path instanceof EntityPath<?>) {
+            applyEntityJoin(query, (EntityPath<P>) path, alias, joinType);
+        } else {
+            throw new IllegalArgumentException("Unsupported path type: " + path.getClass().getName());
+        }
+    }
+
+    /**
+     * Применяет соединение для коллекций (например, `CollectionExpression`).
+     */
+    private <T, P> void applyCollectionJoin(JPQLQuery<T> query, CollectionExpression<?, P> path, Path<P> alias, JoinType joinType) {
+        switch (joinType) {
+            case LEFT -> query.leftJoin(path, alias);
+            case RIGHT -> query.rightJoin(path, alias);
+            case INNER -> query.join(path, alias);
+            default -> throw new IllegalArgumentException("Unsupported join type: " + joinType);
+        }
+    }
+
+    /**
+     * Применяет соединение для сущностей (`EntityPath`).
+     */
+    private <T, P> void applyEntityJoin(JPQLQuery<T> query, EntityPath<P> path, Path<P> alias, JoinType joinType) {
         switch (joinType) {
             case LEFT -> query.leftJoin(path, alias);
             case RIGHT -> query.rightJoin(path, alias);
