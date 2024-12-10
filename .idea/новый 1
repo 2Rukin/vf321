@@ -1,3 +1,47 @@
+private Expression<PfLoanFundsRqRegistryItemBo> getProjections(List<RegistryCodes> fields) {
+    QPfLoanFundsRqRegistryItemBo qBo = new QPfLoanFundsRqRegistryItemBo(
+        paymentAnalyticEntity.id,
+        paymentAnalyticEntity.clientId,
+        paymentAnalyticEntity.paymentDocumentId,
+        fields.contains(RegistryCodes.NUMBER) ? paymentAnalyticEntity.number : null,
+        fields.contains(RegistryCodes.STATUS) ? paymentAnalyticEntity.status : null,
+        fields.contains(RegistryCodes.DATE) ? paymentAnalyticEntity.date : null,
+        fields.contains(RegistryCodes.FUNDS_TYPE) ? paymentAnalyticEntity.fundsType : null,
+        fields.contains(RegistryCodes.CREDIT_AGREEMENT_NUMBER) ? paymentAnalyticEntity.creditAgreementNumber : null,
+        fields.contains(RegistryCodes.CREDIT_AGREEMENT_DATE) ? paymentAnalyticEntity.creditAgreementDate : null,
+        fields.contains(RegistryCodes.PAYER_ACCOUNT) ? paymentAnalyticEntity.payerAccount : null,
+        fields.contains(RegistryCodes.OBC_ACCOUNT_FLAG) ? paymentAnalyticEntity.obcAccountFlag : null,
+        fields.contains(RegistryCodes.TRANCHE_ISSUE_DATE) ? paymentAnalyticEntity.trancheIssueDate : null,
+        fields.contains(RegistryCodes.AMOUNT) ? paymentAnalyticEntity.amount : null,
+        fields.contains(RegistryCodes.PAYMENT_PURPOSE) ? paymentAnalyticEntity.paymentPurpose : null,
+        fields.contains(RegistryCodes.RECIPIENT_NAME) ? paymentAnalyticEntity.recipientName : null,
+        fields.contains(RegistryCodes.RECIPIENT_ACCOUNT) ? paymentAnalyticEntity.recipientAccount : null,
+        fields.contains(RegistryCodes.DVRU_NUMBER) ? paymentAnalyticEntity.dvruNumber : null,
+        fields.contains(RegistryCodes.DVRU_DATE) ? paymentAnalyticEntity.dvruDate : null,
+        fields.contains(RegistryCodes.PAYMENT_TYPE) ? paymentAnalyticEntity.paymentType : null,
+        fields.contains(RegistryCodes.PAYMENT_OBJECTS)
+            ? Projections.list(
+                new QPaymentObjectEntityBo(
+                    paymentObjectEntity.name,
+                    paymentObjectEntity.projectName,
+                    Projections.list(
+                        new QPaymentObjectsSsrEntityBo(
+                            Projections.list(
+                                new QPaymentSsrArticleEntityBo(paymentSsrArticleEntity.code)
+                            )
+                        )
+                    )
+                )
+            )
+            : null
+    );
+
+    return qBo;
+}
+
+
++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
 private Expression<?>[] getExpressions() {
     List<Expression<?>> projections = new ArrayList<>();
     PathBuilder<?> paymentAnalyticEntity = new PathBuilder<>(PaymentAnalyticEntity.class, "paymentAnalyticEntity");
