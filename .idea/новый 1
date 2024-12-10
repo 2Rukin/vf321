@@ -233,5 +233,86 @@ class PaymentAnalyticServiceTest {
         return tuple;
     }
 }
++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+// Метод формирования проекций
+private Expression<PfLoanFundsRqRegistryItemBo> getProjections(List<RegistryCodes> fields) {
+    // Собираем обязательные поля
+    List<Expression<?>> projections = new ArrayList<>(getMandatoryFields());
+
+    // Добавляем опциональные поля из fields[]
+    if (fields != null && !fields.isEmpty()) {
+        projections.addAll(getOptionalFields(fields));
+    } else {
+        // Если fields пуст, добавляем все доступные опциональные поля
+        projections.addAll(getAllOptionalFields());
+    }
+
+    return Projections.constructor(PfLoanFundsRqRegistryItemBo.class, projections.toArray(new Expression<?>[0]));
+}
+
+// Обязательные поля (всегда включены)
+private List<Expression<?>> getMandatoryFields() {
+    return List.of(
+        paymentAnalyticEntity.id,
+        paymentAnalyticEntity.clientId,
+        paymentAnalyticEntity.paymentDocumentId
+    );
+}
+
+// Опциональные поля, указанные в fields[]
+private List<Expression<?>> getOptionalFields(List<RegistryCodes> fields) {
+    Map<RegistryCodes, Expression<?>> fieldMapping = getFieldMapping();
+    return fields.stream()
+                 .map(fieldMapping::get)
+                 .filter(Objects::nonNull) // Игнорируем неизвестные поля
+                 .collect(Collectors.toList());
+}
+
+// Все опциональные поля (если fields пуст)
+private List<Expression<?>> getAllOptionalFields() {
+    return new ArrayList<>(getFieldMapping().values());
+}
+
+// Карта соответствий RegistryCodes -> Поля
+private Map<RegistryCodes, Expression<?>> getFieldMapping() {
+    Map<RegistryCodes, Expression<?>> fieldMapping = new HashMap<>();
+    fieldMapping.put(RegistryCodes.NUMBER, paymentAnalyticEntity.number);
+    fieldMapping.put(RegistryCodes.STATUS, paymentAnalyticEntity.status);
+    fieldMapping.put(RegistryCodes.DATE, paymentAnalyticEntity.date);
+    fieldMapping.put(RegistryCodes.FUNDS_TYPE, paymentAnalyticEntity.fundsType);
+    fieldMapping.put(RegistryCodes.CREDIT_AGREEMENT_NUMBER, paymentAnalyticEntity.creditAgreementNumber);
+    fieldMapping.put(RegistryCodes.CREDIT_AGREEMENT_DATE, paymentAnalyticEntity.creditAgreementDate);
+    fieldMapping.put(RegistryCodes.PAYER_ACCOUNT, paymentAnalyticEntity.payerAccount);
+    fieldMapping.put(RegistryCodes.OBC_ACCOUNT_FLAG, paymentAnalyticEntity.obcAccountFlag);
+    fieldMapping.put(RegistryCodes.TRANCHE_ISSUE_DATE, paymentAnalyticEntity.trancheIssueDate);
+    fieldMapping.put(RegistryCodes.AMOUNT, paymentAnalyticEntity.amount);
+    fieldMapping.put(RegistryCodes.PAYMENT_PURPOSE, paymentAnalyticEntity.paymentPurpose);
+    fieldMapping.put(RegistryCodes.RECIPIENT_NAME, paymentAnalyticEntity.recipientName);
+    fieldMapping.put(RegistryCodes.RECIPIENT_ACCOUNT, paymentAnalyticEntity.recipientAccount);
+    fieldMapping.put(RegistryCodes.DVRU_NUMBER, paymentAnalyticEntity.dvruNumber);
+    fieldMapping.put(RegistryCodes.DVRU_DATE, paymentAnalyticEntity.dvruDate);
+    fieldMapping.put(RegistryCodes.PAYMENT_TYPE, paymentAnalyticEntity.paymentType);
+
+    // Вложенные поля
+    fieldMapping.put(RegistryCodes.PAYMENT_OBJECTS, getNestedProjections());
+    return fieldMapping;
+}
+
+// Вложенные проекции (например, для PaymentObjects)
+private Expression<?> getNestedProjections() {
+    return Projections.list(
+        Projections.constructor(PaymentObjectEntityBo.class,
+            paymentObjectEntity.name,
+            paymentObjectEntity.projectName,
+            Projections.constructor(PaymentObjectsSsrEntityBo.class,
+                Projections.list(
+                    Projections.constructor(PaymentSsrArticleEntityBo.class,
+                        paymentSsrArticleEntity.code
+                    )
+                )
+            )
+        )
+    );
+}
 
 
