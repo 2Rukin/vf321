@@ -1,24 +1,30 @@
 private Expression<PfLoanFundsRqRegistryItemBo> getProjections(List<RegistryCodes> fields) {
     QPfLoanFundsRqRegistryItemBo qBo = new QPfLoanFundsRqRegistryItemBo(
-        paymentAnalyticEntity.id,
-        paymentAnalyticEntity.clientId,
-        paymentAnalyticEntity.paymentDocumentId,
+        paymentAnalyticEntity.id, // Обязательное поле
+        paymentAnalyticEntity.clientId, // Обязательное поле
+        paymentAnalyticEntity.paymentDocumentId, // Обязательное поле
+        // Простые поля
         fields.contains(RegistryCodes.NUMBER) ? paymentAnalyticEntity.number : null,
         fields.contains(RegistryCodes.STATUS) ? paymentAnalyticEntity.status : null,
         fields.contains(RegistryCodes.DATE) ? paymentAnalyticEntity.date : null,
         fields.contains(RegistryCodes.FUNDS_TYPE) ? paymentAnalyticEntity.fundsType : null,
-        fields.contains(RegistryCodes.CREDIT_AGREEMENT_NUMBER) ? paymentAnalyticEntity.creditAgreementNumber : null,
-        fields.contains(RegistryCodes.CREDIT_AGREEMENT_DATE) ? paymentAnalyticEntity.creditAgreementDate : null,
+        // Поля для CREDIT_AGREEMENT
+        fields.contains(RegistryCodes.CREDIT_AGREEMENT) ? paymentAnalyticEntity.creditAgreementNumber : null,
+        fields.contains(RegistryCodes.CREDIT_AGREEMENT) ? paymentAnalyticEntity.creditAgreementDate : null,
         fields.contains(RegistryCodes.PAYER_ACCOUNT) ? paymentAnalyticEntity.payerAccount : null,
         fields.contains(RegistryCodes.OBC_ACCOUNT_FLAG) ? paymentAnalyticEntity.obcAccountFlag : null,
         fields.contains(RegistryCodes.TRANCHE_ISSUE_DATE) ? paymentAnalyticEntity.trancheIssueDate : null,
+        // Поля для AMOUNT
         fields.contains(RegistryCodes.AMOUNT) ? paymentAnalyticEntity.amount : null,
+        fields.contains(RegistryCodes.AMOUNT) ? paymentAnalyticEntity.payerAccount : null,
         fields.contains(RegistryCodes.PAYMENT_PURPOSE) ? paymentAnalyticEntity.paymentPurpose : null,
         fields.contains(RegistryCodes.RECIPIENT_NAME) ? paymentAnalyticEntity.recipientName : null,
         fields.contains(RegistryCodes.RECIPIENT_ACCOUNT) ? paymentAnalyticEntity.recipientAccount : null,
-        fields.contains(RegistryCodes.DVRU_NUMBER) ? paymentAnalyticEntity.dvruNumber : null,
-        fields.contains(RegistryCodes.DVRU_DATE) ? paymentAnalyticEntity.dvruDate : null,
+        // Поля для DVRU
+        fields.contains(RegistryCodes.DVRU) ? paymentAnalyticEntity.dvruNumber : null,
+        fields.contains(RegistryCodes.DVRU) ? paymentAnalyticEntity.dvruDate : null,
         fields.contains(RegistryCodes.PAYMENT_TYPE) ? paymentAnalyticEntity.paymentType : null,
+        // Вложенные объекты
         fields.contains(RegistryCodes.PAYMENT_OBJECTS)
             ? Projections.list(
                 new QPaymentObjectEntityBo(
@@ -38,6 +44,7 @@ private Expression<PfLoanFundsRqRegistryItemBo> getProjections(List<RegistryCode
 
     return qBo;
 }
+
 
 
 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
