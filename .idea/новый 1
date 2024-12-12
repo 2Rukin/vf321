@@ -1,3 +1,306 @@
+Ниже представлен улучшенный вариант сервисного слоя, учитывающий принципы SOLID, улучшенную тестируемость и гибкость. Изменения:
+
+1. **Отделение логики сортировки**:  
+   Вместо того, чтобы держать логику сортировки в сервисе, она инкапсулирована в отдельном сервисе/компоненте `SortingService`, который использует `SortOrderBuilder`. Это упростит тестирование: можно отдельно тестировать логику формирования сортировки, подавая разные входные данные и проверяя выходные `OrderSpecifier<?>`.
+
+2. **Отделение логики маппинга**:  
+   Создан отдельный маппер `PaymentAnalyticMapper` для преобразования `List<Group>` в `List<PaymentAnalyticDto>` и сборки коллекций в объекты DTO. Это соответствует принципу единственной ответственности (SRP). Теперь `PaymentAnalyticService` не знает деталей о том, как именно маппить поля или коллекции, его задача — orchestrate процесс: получить данные от репозитория, запросить у `SortingService` сортировку, передать их мапперу для преобразования. Это упрощает тестирование, потому что можно отдельно тестировать маппер и отдельно тестировать сервис.
+
+3. **S.O.L.I.D.**:  
+   - **S (Single Responsibility)**: Сервис отвечает за общий поток: получить параметры, вызвать репозиторий, отсортировать, замаппить. Логику сортировки и маппинга вынесли в отдельные классы.  
+   - **O (Open-Closed)**: Добавить новый вид сортировки или изменить маппинг можно, не меняя код сервисного слоя.  
+   - **L (Liskov Substitution)**: Не нарушается, так как мы не меняем иерархии.  
+   - **I (Interface Segregation)**: Можно при необходимости выделить интерфейсы для `SortingService`, `PaymentAnalyticMapper`.  
+   - **D (Dependency Inversion)**: Сервис зависит от абстракций (например, интерфейсов маппера и сортировщика, если их выделить), а не от конкретных реализаций.
+
+4. **Тестируемость**:  
+   - Можно замокать `SortingService` и `PaymentAnalyticMapper` и тестировать `PaymentAnalyticService` изолированно.  
+   - Можно отдельно протестировать `PaymentAnalyticMapper` и `SortingService`.
+
+### Код примера
+
+#### PaymentAnalyticMapper.java
+```java
+package com.example.mapper;
+
+import com.example.config.CodeDefinition;
+import com.example.config.RegistryCodes;
+import com.example.config.RegistryCodeDefinitions;
+import com.example.dto.PaymentAnalyticDto;
+import com.example.dto.PaymentAnalyticDto.PaymentObjectEntityDto;
+import com.example.dto.PaymentAnalyticDto.PaymentObjectSsrEntityDto;
+import com.example.dto.PaymentAnalyticDto.PaymentSsrArticleDto;
+import com.example.entity.PaymentAnalyticStatus;
+import com.example.entity.PaymentType;
+import com.example.entity.FundsType;
+import com.example.entity.QPaymentAnalyticEntity;
+import com.querydsl.core.group.Group;
+import com.querydsl.core.types.Expression;
+
+import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Set;
+
+public class PaymentAnalyticMapper {
+
+    private static final QPaymentAnalyticEntity pa = QPaymentAnalyticEntity.paymentAnalyticEntity;
+
+    /**
+     * Маппит результаты выборки (List<Group>) в List<PaymentAnalyticDto>.
+     * @param fields выбранные поля (содержит ID, CLIENT_ID, PAYMENT_DOCUMENT_ID)
+     * @param groups результат запроса
+     * @param needGrouping true, если нужны коллекции
+     */
+    public List<PaymentAnalyticDto> mapGroupsToDto(Set<RegistryCodes> fields, List<Group> groups, boolean needGrouping) {
+        List<PaymentAnalyticDto> dtos = new ArrayList<>();
+
+        for (Group g : groups) {
+            PaymentAnalyticDto dto = new PaymentAnalyticDto();
+            dto.setId((Long) g.get(pa.id));
+            dto.setClientId((Long) g.get(pa.clientId));
+            dto.setPaymentDocumentId((Long) g.get(pa.paymentDocumentId));
+
+            List<String> paymentObjectNames = null;
+            List<String> paymentObjectProjectNames = null;
+            List<String> ssrArticleCodes = null;
+
+            // Проходим по полям и маппим скалярные значения
+            for (RegistryCodes code : fields) {
+                CodeDefinition cd = RegistryCodeDefinitions.getCodeDefinition(code);
+                if (cd == null) continue;
+
+                for (Expression<?> expr : cd.getProjections()) {
+                    Object value = g.get(expr);
+                    if (value == null) continue;
+
+                    switch (code) {
+                        case NUMBER -> dto.setNumber((Integer) value);
+                        case DATE -> dto.setDate((LocalDate) value);
+                        case LOAN_FUNDS_REQUEST_STATUS -> dto.setStatus((PaymentAnalyticStatus) value);
+                        case FUNDS_TYPE -> dto.setFundsType((FundsType) value);
+                        case CREDIT_AGREEMENT -> {
+                            if (expr.equals(pa.creditAgreementNumber)) {
+                                dto.setCreditAgreementNumber((String) value);
+                            } else if (expr.equals(pa.creditAgreementDate)) {
+                                dto.setCreditAgreementDate((LocalDate) value);
+                            }
+                        }
+                        case PAYER_ACCOUNT -> {
+                            if (expr.equals(pa.payerAccount)) {
+                                dto.setPayerAccount((String) value);
+                            } else if (expr.equals(pa.obcAccountFlag)) {
+                                dto.setObcAccountFlag((Boolean) value);
+                            }
+                        }
+                        case TRANCHE_ISSUE_DATE -> dto.setTrancheIssueDate((LocalDate) value);
+                        case AMOUNT -> dto.setAmount((BigDecimal) value);
+                        case PAYMENT_PURPOSE -> dto.setPaymentPurpose((String) value);
+                        case RECIPIENT_NAME -> dto.setRecipientName((String) value);
+                        case RECIPIENT_ACCOUNT -> dto.setRecipientAccount((String) value);
+                        case DVRU -> {
+                            if (expr.equals(pa.dvruNumber)) {
+                                dto.setDvruNumber((String) value);
+                            } else if (expr.equals(pa.dvruDate)) {
+                                dto.setDvruDate((LocalDate) value);
+                            }
+                        }
+                        case PAYMENT_TYPE -> dto.setPaymentType((PaymentType) value);
+                        case PAYMENT_OBJECT -> {
+                            // Коллекции имён и projectName
+                            if (expr.toString().contains("projectName")) {
+                                paymentObjectProjectNames = (List<String>) value;
+                            } else if (expr.toString().contains("name")) {
+                                paymentObjectNames = (List<String>) value;
+                            }
+                        }
+                        case SSR_ARTICLE -> {
+                            ssrArticleCodes = (List<String>) value;
+                        }
+                        default -> {
+                            // Остальные игнорируем
+                        }
+                    }
+                }
+            }
+
+            // Сборка paymentObjects из списков
+            dto.setPaymentObjects(buildPaymentObjects(paymentObjectNames, paymentObjectProjectNames, ssrArticleCodes));
+
+            dtos.add(dto);
+        }
+
+        return dtos;
+    }
+
+    /**
+     * Строим список PaymentObjectEntityDto из списков строк.
+     */
+    private List<PaymentObjectEntityDto> buildPaymentObjects(List<String> names, List<String> projectNames, List<String> ssrCodes) {
+        if (names == null || projectNames == null) {
+            return null;
+        }
+
+        List<PaymentObjectEntityDto> objects = new ArrayList<>();
+        int size = Math.min(names.size(), projectNames.size());
+        for (int i = 0; i < size; i++) {
+            PaymentObjectEntityDto obj = new PaymentObjectEntityDto();
+            obj.setName(names.get(i));
+            obj.setProjectName(projectNames.get(i));
+
+            PaymentObjectSsrEntityDto ssr = new PaymentObjectSsrEntityDto();
+            ssr.setPaymentSsrArticles(buildSsrArticles(ssrCodes));
+            obj.setPaymentObjectSsr(ssr);
+
+            objects.add(obj);
+        }
+
+        return objects.isEmpty() ? null : objects;
+    }
+
+    /**
+     * Строим список PaymentSsrArticleDto из списка кодов.
+     */
+    private List<PaymentSsrArticleDto> buildSsrArticles(List<String> codes) {
+        if (codes == null) return null;
+        List<PaymentSsrArticleDto> articles = new ArrayList<>();
+        for (String c : codes) {
+            PaymentSsrArticleDto a = new PaymentSsrArticleDto();
+            a.setCode(c);
+            articles.add(a);
+        }
+        return articles.isEmpty() ? null : articles;
+    }
+}
+```
+
+#### SortingService.java
+```java
+package com.example.service;
+
+import com.example.config.CodeDefinition;
+import com.example.config.RegistryCodes;
+import com.example.config.RegistryCodeDefinitions;
+import com.example.dto.SortingDto;
+import com.example.util.SortOrderBuilder;
+import com.querydsl.core.types.OrderSpecifier;
+
+import java.util.List;
+
+public class SortingService {
+
+    /**
+     * Возвращает список OrderSpecifier для сортировки на основании SortingDto.
+     */
+    public List<OrderSpecifier<?>> getOrderSpecifiers(SortingDto sortingDto) {
+        String sortField = sortingDto != null ? sortingDto.getSortField() : null;
+        Boolean sortDescending = sortingDto != null ? sortingDto.getSortDescending() : Boolean.TRUE;
+
+        return SortOrderBuilder.buildOrderSpecifiers(sortField, sortDescending);
+    }
+}
+```
+
+#### PaymentAnalyticService.java
+```java
+package com.example.service;
+
+import com.example.config.CodeDefinition;
+import com.example.config.RegistryCodes;
+import com.example.config.RegistryCodeDefinitions;
+import com.example.dto.PaymentAnalyticDto;
+import com.example.dto.SortingDto;
+import com.example.entity.QPaymentAnalyticEntity;
+import com.example.mapper.PaymentAnalyticMapper;
+import com.example.repository.PaymentAnalyticRepository;
+import com.querydsl.core.group.Group;
+import com.querydsl.core.types.Expression;
+import com.querydsl.core.types.Predicate;
+import com.querydsl.core.types.OrderSpecifier;
+import org.springframework.data.domain.Pageable;
+import org.springframework.stereotype.Service;
+
+import java.util.*;
+
+@Service
+public class PaymentAnalyticService {
+
+    private final PaymentAnalyticRepository repository;
+    private final SortingService sortingService;
+    private final PaymentAnalyticMapper mapper;
+
+    public PaymentAnalyticService(PaymentAnalyticRepository repository, SortingService sortingService, PaymentAnalyticMapper mapper) {
+        this.repository = repository;
+        this.sortingService = sortingService;
+        this.mapper = mapper;
+    }
+
+    public List<PaymentAnalyticDto> getPaymentAnalytics(
+            List<RegistryCodes> fields,
+            SortingDto sortingDto,
+            Pageable pageable,
+            Predicate predicate
+    ) {
+        boolean needGrouping = fields.contains(RegistryCodes.PAYMENT_OBJECT)
+                            || fields.contains(RegistryCodes.SSR_ARTICLE);
+
+        // Всегда добавляем обязательные поля
+        Set<RegistryCodes> extendedFields = new LinkedHashSet<>(fields);
+        extendedFields.add(RegistryCodes.ID);
+        extendedFields.add(RegistryCodes.CLIENT_ID);
+        extendedFields.add(RegistryCodes.PAYMENT_DOCUMENT_ID);
+
+        // Формируем projections
+        List<Expression<?>> exprs = new ArrayList<>();
+        for (RegistryCodes code : extendedFields) {
+            CodeDefinition cd = RegistryCodeDefinitions.getCodeDefinition(code);
+            if (cd != null && !cd.getProjections().isEmpty()) {
+                exprs.addAll(cd.getProjections());
+            }
+        }
+
+        // Получаем сортировку от SortingService
+        List<OrderSpecifier<?>> orderSpecifiers = sortingService.getOrderSpecifiers(sortingDto);
+
+        Expression<?>[] expressionsArray = exprs.toArray(new Expression[0]);
+        List<Group> groups = repository.fetchAnalyticsGrouped(
+                expressionsArray,
+                orderSpecifiers,
+                pageable,
+                predicate,
+                needGrouping
+        );
+
+        // Маппим результаты в DTO
+        return mapper.mapGroupsToDto(extendedFields, groups, needGrouping);
+    }
+}
+```
+
+---
+
+**Комментарии:**
+
+- **PaymentAnalyticService**:  
+  - Зависит от `PaymentAnalyticRepository` (получение данных),  
+  - `SortingService` (получение списков сортировок),  
+  - `PaymentAnalyticMapper` (маппинг результатов).
+  
+  Так мы можем легко замокать эти зависимости в тестах и протестировать логику `PaymentAnalyticService` изолированно.
+
+- **SortingService**:  
+  Использует `SortOrderBuilder` для получения `OrderSpecifier`. Можно добавить интерфейс для `SortingService`, чтобы при необходимости использовать разные реализации.
+
+- **PaymentAnalyticMapper**:  
+  Инкапсулирует всю логику маппинга `Group` в `PaymentAnalyticDto`. Можно тестировать отдельно: подать на вход тестовые `Group` и проверить корректность сформированных DTO.
+
+Таким образом, код стал более модульным, соответствующим принципам SOLID, упрощенным для тестирования и расширяемости.
+
+
+
+
++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 import com.querydsl.core.types.Order;
 import com.querydsl.core.types.OrderSpecifier;
 
