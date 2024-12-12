@@ -1,3 +1,77 @@
+import com.querydsl.core.types.Order;
+import com.querydsl.core.types.OrderSpecifier;
+
+import java.util.ArrayList;
+import java.util.List;
+
+public class SortOrderBuilder {
+    
+    // Поле по умолчанию для сортировки
+    private static final OrderSpecifier<?> DEFAULT_ORDER = QPaymentAnalyticEntity.paymentAnalyticEntity.date.desc();
+    
+    /**
+     * Формируем список сортировок на основании входного сортировочного запроса.
+     * @param sortField        Строковое значение поля сортировки, соответствует одному из RegistryCodes (или null)
+     * @param sortDescending   Если true - сортируем по убыванию, иначе по возрастанию.
+     * @return список OrderSpecifier для применения в запросе QueryDSL
+     */
+    public static List<OrderSpecifier<?>> buildOrderSpecifiers(String sortField, Boolean sortDescending) {
+        List<OrderSpecifier<?>> orderSpecifiers = new ArrayList<>();
+
+        RegistryCodes code = null;
+        if (sortField != null && !sortField.isBlank()) {
+            try {
+                code = RegistryCodes.valueOf(sortField.toUpperCase());
+            } catch (IllegalArgumentException e) {
+                // Если не удалось сопоставить sortField с RegistryCodes, code остаётся null
+            }
+        }
+        
+        // Если код не найден или не задан, применяем сортировку по умолчанию
+        if (code == null) {
+            orderSpecifiers.add(DEFAULT_ORDER);
+            return orderSpecifiers;
+        }
+
+        CodeDefinition definition = RegistryCodeDefinitions.getCodeDefinition(code);
+        if (definition == null) {
+            // Если для данного code нет определения - сортируем по умолчанию
+            orderSpecifiers.add(DEFAULT_ORDER);
+            return orderSpecifiers;
+        }
+
+        // Берём orderSpecifiers из определения
+        List<OrderSpecifier<?>> baseOrderSpecifiers = definition.getOrderSpecifiers();
+        if (baseOrderSpecifiers.isEmpty()) {
+            // Если нет явно заданных сортировок в CodeDefinition, сортируем по умолчанию
+            orderSpecifiers.add(DEFAULT_ORDER);
+            return orderSpecifiers;
+        }
+
+        // Инвертируем направление при необходимости
+        if (Boolean.TRUE.equals(sortDescending)) {
+            // Если нужно сортировать по убыванию, то для каждого поля применяем descending
+            for (OrderSpecifier<?> os : baseOrderSpecifiers) {
+                orderSpecifiers.add(os.getTarget().desc());
+            }
+        } else {
+            // Если нужно сортировать по возрастанию - используем baseOrderSpecifiers как есть, предполагая что они уже asc.
+            // Если в базе CodeDefinition хранились Asc, то просто добавляем их.
+            // Если нужно более гибко, можно хранить исходные поля без OrderSpecifier и здесь формировать нужный Order.
+            for (OrderSpecifier<?> os : baseOrderSpecifiers) {
+                orderSpecifiers.add(os.getTarget().asc());
+            }
+        }
+
+        return orderSpecifiers;
+    }
+}
+
+
+
+
+
+
 package com.example.config;
 
 import com.querydsl.core.group.GroupBy;
