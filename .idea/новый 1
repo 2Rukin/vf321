@@ -11,6 +11,8 @@ public class CodeDefinition {
     private final List<Expression<?>> projections;
     private final List<OrderSpecifier<?>> orderSpecifiers;
 
+}
+
     public CodeDefinition(List<Expression<?>> projections, List<OrderSpecifier<?>> orderSpecifiers) {
         this.projections = projections;
         this.orderSpecifiers = orderSpecifiers;
@@ -23,4 +25,3 @@ public class CodeDefinition {
     public List<OrderSpecifier<?>> getOrderSpecifiers() {
         return orderSpecifiers;
     }
-}
