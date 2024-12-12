@@ -46,32 +46,32 @@ public class PaymentAnalyticRepository {
             query.offset(offset);
         }
 
+        // Создание базового GroupByBuilder
         var groupByBuilder = GroupBy.groupBy(pa.id);
-        boolean firstAggregator = true;
 
-        // Для всех полей используем list(expr).
-        // Для скалярных полей в маппере возьмём первый элемент.
-        // Для коллекционных полей — весь список.
+        // Список всех агрегаторов
+        List<GroupExpression<?, ?>> aggregators = new ArrayList<>();
+
+        // Собираем все агрегаторы
         for (Expression<?> expr : expressions) {
             var aggregator = GroupBy.list(expr).as(expr.toString());
-            if (firstAggregator) {
-                groupByBuilder = groupByBuilder.as(aggregator);
-                firstAggregator = false;
-            } else {
-                groupByBuilder = groupByBuilder.and(aggregator);
-            }
+            aggregators.add(aggregator);
         }
 
-        // Если не было ни одного поля
-        if (firstAggregator) {
-            // хотя бы id добавим
-            groupByBuilder = groupByBuilder.as(GroupBy.list(pa.id).as("id"));
+        // Если агрегаторы пусты, добавляем хотя бы id
+        if (aggregators.isEmpty()) {
+            aggregators.add(GroupBy.list(pa.id).as("id"));
         }
 
-        Map<Long, Group> resultMap = query.transform(groupByBuilder);
+        // Завершаем построение GroupByBuilder
+        var resultTransformer = groupByBuilder.as(aggregators.toArray(new GroupExpression[0]));
+
+        // Выполняем запрос и трансформацию
+        Map<UUID, Group> resultMap = query.transform(resultTransformer);
         return new ArrayList<>(resultMap.values());
     }
 }
+
 
 @Service
 public class PaymentAnalyticMapper {
