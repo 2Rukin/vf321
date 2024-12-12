@@ -1,3 +1,57 @@
+@NamedEntityGraph(
+    name = "PFLoanFundsRqRegistryItemBo.graph",
+    attributeNodes = {
+        @NamedAttributeNode("id"),
+        @NamedAttributeNode("clientId"),
+        @NamedAttributeNode("paymentDocumentId"),
+        @NamedAttributeNode("number"),
+        @NamedAttributeNode("status"),
+        @NamedAttributeNode("date"),
+        @NamedAttributeNode("fundsType"),
+        @NamedAttributeNode("creditAgreementNumber"),
+        @NamedAttributeNode("creditAgreementDate"),
+        @NamedAttributeNode("payerAccount"),
+        @NamedAttributeNode("obcAccountFlag"),
+        @NamedAttributeNode("trancheIssueDate"),
+        @NamedAttributeNode("amount"),
+        @NamedAttributeNode("paymentPurpose"),
+        @NamedAttributeNode("recipientName"),
+        @NamedAttributeNode("recipientAccount"),
+        @NamedAttributeNode("dvruNumber"),
+        @NamedAttributeNode("dvruDate"),
+        @NamedAttributeNode("paymentType"),
+        @NamedAttributeNode(value = "paymentObjects", subgraph = "PaymentObjectEntityBo.subgraph")
+    },
+    subgraphs = {
+        @NamedSubgraph(
+            name = "PaymentObjectEntityBo.subgraph",
+            attributeNodes = {
+                @NamedAttributeNode("name"),
+                @NamedAttributeNode("projectName"),
+                @NamedAttributeNode(value = "paymentObjectSsr", subgraph = "PaymentObjectsSsrEntityBo.subgraph")
+            }
+        ),
+        @NamedSubgraph(
+            name = "PaymentObjectsSsrEntityBo.subgraph",
+            attributeNodes = {
+                @NamedAttributeNode(value = "paymentSsrArticles", subgraph = "PaymentSsrArticleEntityBo.subgraph")
+            }
+        ),
+        @NamedSubgraph(
+            name = "PaymentSsrArticleEntityBo.subgraph",
+            attributeNodes = {
+                @NamedAttributeNode("code")
+            }
+        )
+    }
+)
+@Entity
+public class PFLoanFundsRqRegistryItemBo {
+    // Поля и методы как в вашем коде
+}
+
+
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 private Expression<PfLoanFundsRqRegistryItemBo> getProjections(List<RegistryCodes> fields) {
     QPfLoanFundsRqRegistryItemBo qBo = new QPfLoanFundsRqRegistryItemBo(
         paymentAnalyticEntity.id, // Обязательное поле
