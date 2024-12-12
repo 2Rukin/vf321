@@ -1,3 +1,190 @@
+@Repository
+public class PaymentAnalyticRepository {
+
+    private final JPAQueryFactory queryFactory;
+    private static final QPaymentAnalyticEntity pa = QPaymentAnalyticEntity.paymentAnalyticEntity;
+
+    public PaymentAnalyticRepository(EntityManager entityManager) {
+        this.queryFactory = new JPAQueryFactory(entityManager);
+    }
+
+    /**
+     * Выполняет запрос и группирует результаты по pa.id.
+     * Для каждого поля используется list(...), чтобы получить значения в список.
+     * Для скалярных полей будет список с одним элементом.
+     * Для коллекционных полей - список всех элементов.
+     */
+    public List<Group> fetchAnalyticsGrouped(
+            Expression<?>[] expressions,
+            List<OrderSpecifier<?>> orderSpecifiers,
+            Pageable pageable,
+            Predicate predicate,
+            boolean needGrouping
+    ) {
+        Integer limit = (pageable != null && pageable.getPageSize() > 0) ? pageable.getPageSize() : null;
+        Integer offset = null;
+        if (pageable != null && pageable.getOffset() > 0) {
+            long off = pageable.getOffset();
+            offset = (off <= Integer.MAX_VALUE) ? (int) off : Integer.MAX_VALUE;
+        }
+
+        var query = queryFactory.select(expressions).from(pa);
+
+        if (predicate != null) {
+            query.where(predicate);
+        }
+
+        if (orderSpecifiers != null && !orderSpecifiers.isEmpty()) {
+            query.orderBy(orderSpecifiers.toArray(new OrderSpecifier[0]));
+        }
+
+        if (limit != null && limit > 0) {
+            query.limit(limit);
+        }
+
+        if (offset != null && offset >= 0) {
+            query.offset(offset);
+        }
+
+        var groupByBuilder = GroupBy.groupBy(pa.id);
+        boolean firstAggregator = true;
+
+        // Для всех полей используем list(expr).
+        // Для скалярных полей в маппере возьмём первый элемент.
+        // Для коллекционных полей — весь список.
+        for (Expression<?> expr : expressions) {
+            var aggregator = GroupBy.list(expr).as(expr.toString());
+            if (firstAggregator) {
+                groupByBuilder = groupByBuilder.as(aggregator);
+                firstAggregator = false;
+            } else {
+                groupByBuilder = groupByBuilder.and(aggregator);
+            }
+        }
+
+        // Если не было ни одного поля
+        if (firstAggregator) {
+            // хотя бы id добавим
+            groupByBuilder = groupByBuilder.as(GroupBy.list(pa.id).as("id"));
+        }
+
+        Map<Long, Group> resultMap = query.transform(groupByBuilder);
+        return new ArrayList<>(resultMap.values());
+    }
+}
+
+@Service
+public class PaymentAnalyticMapper {
+
+    private static final QPaymentAnalyticEntity pa = QPaymentAnalyticEntity.paymentAnalyticEntity;
+
+    public List<PfLoanFundsRqRegistryItemBo> mapGroupsToDto(Set<RegistryCodes> fields, List<Group> groups, boolean needGrouping) {
+        List<PfLoanFundsRqRegistryItemBo> dtos = new ArrayList<>();
+
+        for (Group group : groups) {
+            PfLoanFundsRqRegistryItemBo dto = new PfLoanFundsRqRegistryItemBo();
+
+            // Пример для обязательных полей:
+            dto.setId(getSingleValue(group, pa.id, Long.class));
+            dto.setClientId(getSingleValue(group, pa.clientId, Long.class));
+            dto.setPaymentDocumentId(getSingleValue(group, pa.paymentDocumentId, Long.class));
+
+            // Аналогично для других скалярных полей:
+            if (fields.contains(RegistryCodes.NUMBER)) {
+                dto.setNumber(getSingleValue(group, pa.number, Integer.class));
+            }
+            if (fields.contains(RegistryCodes.DATE)) {
+                dto.setDate(getSingleValue(group, pa.date, java.time.LocalDate.class));
+            }
+            if (fields.contains(RegistryCodes.FUNDS_TYPE)) {
+                dto.setFundsType(getSingleValue(group, pa.fundsType, FundsType.class));
+            }
+            // И так далее для каждого скалярного поля...
+
+            // Для DVRU (два поля) извлекаем отдельно:
+            if (fields.contains(RegistryCodes.DVRU)) {
+                dto.setDvruNumber(getSingleValue(group, pa.dvruNumber, String.class));
+                dto.setDvruDate(getSingleValue(group, pa.dvruDate, java.time.LocalDate.class));
+            }
+
+            // Для PAYMENT_OBJECT (коллекция):
+            List<String> paymentObjectNames = null;
+            List<String> paymentObjectProjectNames = null;
+            if (fields.contains(RegistryCodes.PAYMENT_OBJECT)) {
+                paymentObjectNames = group.getList(pa.paymentObjects.any().name);
+                paymentObjectProjectNames = group.getList(pa.paymentObjects.any().projectName);
+            }
+
+            // Для SSR_ARTICLE (коллекция):
+            List<String> ssrArticleCodes = null;
+            if (fields.contains(RegistryCodes.SSR_ARTICLE)) {
+                ssrArticleCodes = group.getList(pa.paymentObjects.any().paymentObjectSsr.paymentSsrArticles.any().code);
+            }
+
+            // Собираем paymentObjects
+            dto.setPaymentObjects(buildPaymentObjects(paymentObjectNames, paymentObjectProjectNames, ssrArticleCodes));
+
+            dtos.add(dto);
+        }
+
+        return dtos;
+    }
+
+    /**
+     * Для скалярных полей, где ожидается один элемент в списке, извлекаем первый или null.
+     */
+    private <T> T getSingleValue(Group group, Expression<?> expr, Class<T> type) {
+        List<?> values = group.getList(expr);
+        if (values == null || values.isEmpty()) {
+            return null;
+        }
+        Object val = values.get(0);
+        return type.isInstance(val) ? type.cast(val) : null;
+    }
+
+    /**
+     * Формируем paymentObjects из списков имён, projectName и кодов статей.
+     */
+    private List<PfLoanFundsRqRegistryItemBo.PaymentObjectEntityBo> buildPaymentObjects(
+            List<String> names, List<String> projectNames, List<String> ssrCodes) {
+        if (names == null || projectNames == null) {
+            return null;
+        }
+        List<PfLoanFundsRqRegistryItemBo.PaymentObjectEntityBo> objects = new ArrayList<>();
+        int size = Math.min(names.size(), projectNames.size());
+
+        for (int i = 0; i < size; i++) {
+            PfLoanFundsRqRegistryItemBo.PaymentObjectEntityBo obj = new PfLoanFundsRqRegistryItemBo.PaymentObjectEntityBo(
+                names.get(i),
+                projectNames.get(i),
+                buildPaymentObjectSsr(ssrCodes)
+            );
+            objects.add(obj);
+        }
+        return objects.isEmpty() ? null : objects;
+    }
+
+    private PfLoanFundsRqRegistryItemBo.PaymentObjectsSsrEntityBo buildPaymentObjectSsr(List<String> ssrCodes) {
+        PfLoanFundsRqRegistryItemBo.PaymentObjectsSsrEntityBo ssrDto = new PfLoanFundsRqRegistryItemBo.PaymentObjectsSsrEntityBo(
+            buildSsrArticles(ssrCodes)
+        );
+        return ssrDto;
+    }
+
+    private List<PfLoanFundsRqRegistryItemBo.PaymentSsrArticleEntityBo> buildSsrArticles(List<String> codes) {
+        if (codes == null) return null;
+        List<PfLoanFundsRqRegistryItemBo.PaymentSsrArticleEntityBo> articles = new ArrayList<>();
+        for (String c : codes) {
+            articles.add(new PfLoanFundsRqRegistryItemBo.PaymentSsrArticleEntityBo(c));
+        }
+        return articles.isEmpty() ? null : articles;
+    }
+}
+
+
+
+
+
 package com.example.repository;
 
 import com.querydsl.jpa.impl.JPAQueryFactory;
