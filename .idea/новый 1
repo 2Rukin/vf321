@@ -18,8 +18,7 @@ public class PaymentAnalyticRepository {
             Expression<?>[] expressions,
             List<OrderSpecifier<?>> orderSpecifiers,
             Pageable pageable,
-            Predicate predicate,
-            boolean needGrouping
+            Predicate predicate
     ) {
         Integer limit = (pageable != null && pageable.getPageSize() > 0) ? pageable.getPageSize() : null;
         Integer offset = null;
@@ -54,13 +53,12 @@ public class PaymentAnalyticRepository {
 
         // Собираем все агрегаторы
         for (Expression<?> expr : expressions) {
-            var aggregator = GroupBy.list(expr).as(expr.toString());
-            aggregators.add(aggregator);
+            aggregators.add(createListGroupExpression(expr));
         }
 
         // Если агрегаторы пусты, добавляем хотя бы id
         if (aggregators.isEmpty()) {
-            aggregators.add(GroupBy.list(pa.id).as("id"));
+            aggregators.add(createListGroupExpression(pa.id));
         }
 
         // Завершаем построение GroupByBuilder
@@ -69,6 +67,15 @@ public class PaymentAnalyticRepository {
         // Выполняем запрос и трансформацию
         Map<UUID, Group> resultMap = query.transform(resultTransformer);
         return new ArrayList<>(resultMap.values());
+    }
+
+    /**
+     * Создаёт безопасное выражение для группировки данных в список.
+     * @param expr выражение, которое требуется сгруппировать
+     * @return GroupExpression для списка
+     */
+    private <T> GroupExpression<T, List<T>> createListGroupExpression(Expression<T> expr) {
+        return GroupBy.list(expr);
     }
 }
 
