@@ -1,3 +1,201 @@
+package com.example.config;
+
+import com.querydsl.core.group.GroupBy;
+import com.querydsl.core.types.Expression;
+import com.querydsl.core.types.OrderSpecifier;
+import com.querydsl.core.types.dsl.ComparableExpressionBase;
+import com.querydsl.core.types.dsl.DatePath;
+import com.querydsl.core.types.dsl.NumberExpression;
+import com.querydsl.core.types.dsl.StringExpression;
+import com.example.entity.QPaymentAnalyticEntity;
+import com.example.entity.QPaymentObjectEntityBo;
+import com.example.entity.QPaymentObjectsSsrEntityBo;
+import com.example.entity.QPaymentSsrArticleEntityBo;
+
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import static com.querydsl.core.group.GroupBy.list;
+
+public class RegistryCodeDefinitions {
+
+    private static final QPaymentAnalyticEntity paymentAnalyticEntity = QPaymentAnalyticEntity.paymentAnalyticEntity;
+    private static final QPaymentObjectEntityBo paymentObjectEntityBo = QPaymentObjectEntityBo.paymentObjectEntityBo;
+    private static final QPaymentObjectsSsrEntityBo paymentObjectsSsrEntityBo = QPaymentObjectsSsrEntityBo.paymentObjectsSsrEntityBo;
+    private static final QPaymentSsrArticleEntityBo paymentSsrArticleEntityBo = QPaymentSsrArticleEntityBo.paymentSsrArticleEntityBo;
+
+    private static final Map<RegistryCodes, CodeDefinition> CODE_DEFINITIONS = new HashMap<>();
+
+    static {
+        // Обязательные поля
+        CODE_DEFINITIONS.put(
+            RegistryCodes.ID,
+            new CodeDefinition(
+                List.of(paymentAnalyticEntity.id),
+                List.of(paymentAnalyticEntity.id.asc())
+            )
+        );
+
+        CODE_DEFINITIONS.put(
+            RegistryCodes.CLIENT_ID,
+            new CodeDefinition(
+                List.of(paymentAnalyticEntity.clientId),
+                List.of(paymentAnalyticEntity.clientId.asc())
+            )
+        );
+
+        CODE_DEFINITIONS.put(
+            RegistryCodes.PAYMENT_DOCUMENT_ID,
+            new CodeDefinition(
+                List.of(paymentAnalyticEntity.paymentDocumentId),
+                List.of(paymentAnalyticEntity.paymentDocumentId.asc())
+            )
+        );
+
+        // Примитивные поля
+        CODE_DEFINITIONS.put(
+            RegistryCodes.NUMBER,
+            new CodeDefinition(
+                List.of(paymentAnalyticEntity.number),
+                List.of(paymentAnalyticEntity.number.asc())
+            )
+        );
+
+        CODE_DEFINITIONS.put(
+            RegistryCodes.DATE,
+            new CodeDefinition(
+                List.of(paymentAnalyticEntity.date),
+                List.of(paymentAnalyticEntity.date.asc())
+            )
+        );
+
+        CODE_DEFINITIONS.put(
+            RegistryCodes.LOAN_FUNDS_REQUEST_STATUS,
+            new CodeDefinition(
+                List.of(paymentAnalyticEntity.status),
+                List.of(paymentAnalyticEntity.status.asc())
+            )
+        );
+
+        CODE_DEFINITIONS.put(
+            RegistryCodes.FUNDS_TYPE,
+            new CodeDefinition(
+                List.of(paymentAnalyticEntity.fundsType),
+                List.of(paymentAnalyticEntity.fundsType.asc())
+            )
+        );
+
+        // CREDIT_AGREEMENT: два поля (номер, дата)
+        CODE_DEFINITIONS.put(
+            RegistryCodes.CREDIT_AGREEMENT,
+            new CodeDefinition(
+                List.of(paymentAnalyticEntity.creditAgreementNumber, paymentAnalyticEntity.creditAgreementDate),
+                List.of(paymentAnalyticEntity.creditAgreementNumber.asc(), paymentAnalyticEntity.creditAgreementDate.asc())
+            )
+        );
+
+        // PAYER_ACCOUNT: два поля (payerAccount, obcAccountFlag)
+        CODE_DEFINITIONS.put(
+            RegistryCodes.PAYER_ACCOUNT,
+            new CodeDefinition(
+                List.of(paymentAnalyticEntity.payerAccount, paymentAnalyticEntity.obcAccountFlag),
+                List.of(paymentAnalyticEntity.payerAccount.asc())
+            )
+        );
+
+        CODE_DEFINITIONS.put(
+            RegistryCodes.TRANCHE_ISSUE_DATE,
+            new CodeDefinition(
+                List.of(paymentAnalyticEntity.trancheIssueDate),
+                List.of(paymentAnalyticEntity.trancheIssueDate.asc())
+            )
+        );
+
+        CODE_DEFINITIONS.put(
+            RegistryCodes.AMOUNT,
+            new CodeDefinition(
+                List.of(paymentAnalyticEntity.amount),
+                List.of(paymentAnalyticEntity.amount.asc())
+            )
+        );
+
+        CODE_DEFINITIONS.put(
+            RegistryCodes.PAYMENT_PURPOSE,
+            new CodeDefinition(
+                List.of(paymentAnalyticEntity.paymentPurpose),
+                List.of(paymentAnalyticEntity.paymentPurpose.asc())
+            )
+        );
+
+        CODE_DEFINITIONS.put(
+            RegistryCodes.RECIPIENT_NAME,
+            new CodeDefinition(
+                List.of(paymentAnalyticEntity.recipientName),
+                List.of(paymentAnalyticEntity.recipientName.asc())
+            )
+        );
+
+        CODE_DEFINITIONS.put(
+            RegistryCodes.RECIPIENT_ACCOUNT,
+            new CodeDefinition(
+                List.of(paymentAnalyticEntity.recipientAccount),
+                List.of(paymentAnalyticEntity.recipientAccount.asc())
+            )
+        );
+
+        CODE_DEFINITIONS.put(
+            RegistryCodes.PAYMENT_TYPE,
+            new CodeDefinition(
+                List.of(paymentAnalyticEntity.paymentType),
+                List.of(paymentAnalyticEntity.paymentType.asc())
+            )
+        );
+
+        // DVRU: два поля (dvruNumber, dvruDate)
+        CODE_DEFINITIONS.put(
+            RegistryCodes.DVRU,
+            new CodeDefinition(
+                List.of(paymentAnalyticEntity.dvruNumber, paymentAnalyticEntity.dvruDate),
+                List.of(paymentAnalyticEntity.dvruNumber.asc(), paymentAnalyticEntity.dvruDate.asc())
+            )
+        );
+
+        // PAYMENT_OBJECT: Коллекция paymentObjects (name, projectName).
+        // Возвращаем List<String> для имен и List<String> для projectName
+        Expression<List<String>> paymentObjectNames = list(paymentAnalyticEntity.paymentObjects.any().name);
+        Expression<List<String>> paymentObjectProjectNames = list(paymentAnalyticEntity.paymentObjects.any().projectName);
+
+        CODE_DEFINITIONS.put(
+            RegistryCodes.PAYMENT_OBJECT,
+            new CodeDefinition(
+                List.of(paymentObjectNames, paymentObjectProjectNames),
+                Collections.emptyList()
+            )
+        );
+
+        // SSR_ARTICLE: Коллекция кодов статей
+        Expression<List<String>> ssrArticleCodes = list(paymentAnalyticEntity.paymentObjects.any().paymentObjectSsr.paymentSsrArticles.any().code);
+
+        CODE_DEFINITIONS.put(
+            RegistryCodes.SSR_ARTICLE,
+            new CodeDefinition(
+                List.of(ssrArticleCodes),
+                Collections.emptyList()
+            )
+        );
+    }
+
+    public static CodeDefinition getCodeDefinition(RegistryCodes code) {
+        return CODE_DEFINITIONS.get(code);
+    }
+}
+
+
+
+
+
 import com.querydsl.core.types.Expression;
 import com.querydsl.core.types.OrderSpecifier;
 
