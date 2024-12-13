@@ -1,3 +1,175 @@
+```java
+private Map<RegistryCodes, Expression<?>> buildFieldExpressions(List<RegistryCodes> fields) {
+    // Здесь мы для каждого поля через switch выбираем нужное поле Q-класса или nullExpression
+    // В данном случае paymentAnalyticEntity — это Q-класс вашей сущности.
+    // Предполагается, что paymentAnalyticEntity уже объявлен где-то выше как Q-поле.
+    Map<RegistryCodes, Expression<?>> expressions = new HashMap<>();
+
+    for (RegistryCodes code : fields) {
+        Expression<?> expr = switch (code) {
+            case ID -> paymentAnalyticEntity.id;
+            case CLIENT_ID -> paymentAnalyticEntity.clientId;
+            case PAYMENT_DOCUMENT_ID -> paymentAnalyticEntity.paymentDocumentId;
+            case NUMBER -> paymentAnalyticEntity.number;
+            case LOAN_FUNDS_REQUEST_STATUS -> paymentAnalyticEntity.status;
+            case DATE -> paymentAnalyticEntity.date;
+            case FUNDS_TYPE -> paymentAnalyticEntity.fundsType;
+            case CREDIT_AGREEMENT -> paymentAnalyticEntity.creditAgreementNumber; 
+            case CREDIT_AGREEMENT_DATE -> paymentAnalyticEntity.creditAgreementDate; 
+            case PAYER_ACCOUNT -> paymentAnalyticEntity.payerAccount; 
+            case OBC_ACCOUNT_FLAG -> paymentAnalyticEntity.obcAccountFlag;
+            case TRANCHE_ISSUE_DATE -> paymentAnalyticEntity.trancheIssueDate; 
+            case AMOUNT -> paymentAnalyticEntity.amount;
+            case PAYMENT_PURPOSE -> paymentAnalyticEntity.paymentPurpose;
+            case RECIPIENT_NAME -> paymentAnalyticEntity.recipientName;
+            case RECIPIENT_ACCOUNT -> paymentAnalyticEntity.recipientAccount;
+            case DVRU -> paymentAnalyticEntity.dvruNumber; // обратите внимание: DVRU включает dvruNumber и dvruDate
+            case DVRU_DATE -> paymentAnalyticEntity.dvruDate;
+            case PAYMENT_TYPE -> paymentAnalyticEntity.paymentType;
+            case PAYMENT_OBJECT -> null; // обработаем отдельно
+            case SSR_ARTICLE -> null; // обработается при сборе вложенных объектов
+        };
+        expressions.put(code, expr);
+    }
+
+    return expressions;
+}
+
+public List<PFLoanFundsRqRegistryItemBo> findResults(List<RegistryCodes> fields) {
+    Map<RegistryCodes, Expression<?>> expressions = buildFieldExpressions(fields);
+
+    // Если необходимо получить PAYMENT_OBJECT и SSR_ARTICLE в составе результатов,
+    // нам потребуется использовать GroupBy для агрегирования связанных сущностей.
+    boolean needPaymentObject = fields.contains(RegistryCodes.PAYMENT_OBJECT);
+
+    JPAQuery<?> query = new JPAQuery<>(entityManager);
+    query.from(paymentAnalyticEntity);
+
+    // базовые поля (все, кроме PAYMENT_OBJECT и SSR_ARTICLE)
+    // соберём параметры для конструктора
+    List<Expression<?>> constructorArgs = new ArrayList<>();
+
+    // Порядок аргументов в Projections.constructor должен соответствовать конструктору PFLoanFundsRqRegistryItemBo
+    // Конструктор: (UUID id, UUID clientId, UUID paymentDocumentId, Integer number, PaymentAnalyticStatus status, 
+    //  LocalDate date, FundsType fundsType, String creditAgreementNumber, LocalDate creditAgreementDate, String payerAccount,
+    //  Boolean obcAccountFlag, LocalDate trancheIssueDate, BigDecimal amount, String paymentPurpose, 
+    //  String recipientName, String recipientAccount, String dvruNumber, LocalDate dvruDate, PaymentType paymentType, 
+    //  List<PaymentObjectEntityBo> paymentObjects)
+    // Для отсутствующих полей будем подставлять nullExpression соответствующего класса.
+    constructorArgs.add(fields.contains(RegistryCodes.ID) ? (Expression<?>)expressions.get(RegistryCodes.ID) : Expressions.nullExpression(UUID.class));
+    constructorArgs.add(fields.contains(RegistryCodes.CLIENT_ID) ? (Expression<?>)expressions.get(RegistryCodes.CLIENT_ID) : Expressions.nullExpression(UUID.class));
+    constructorArgs.add(fields.contains(RegistryCodes.PAYMENT_DOCUMENT_ID) ? (Expression<?>)expressions.get(RegistryCodes.PAYMENT_DOCUMENT_ID) : Expressions.nullExpression(UUID.class));
+    constructorArgs.add(fields.contains(RegistryCodes.NUMBER) ? (Expression<?>)expressions.get(RegistryCodes.NUMBER) : Expressions.nullExpression(Integer.class));
+    constructorArgs.add(fields.contains(RegistryCodes.LOAN_FUNDS_REQUEST_STATUS) ? (Expression<?>)expressions.get(RegistryCodes.LOAN_FUNDS_REQUEST_STATUS) : Expressions.nullExpression(PaymentAnalyticStatus.class));
+    constructorArgs.add(fields.contains(RegistryCodes.DATE) ? (Expression<?>)expressions.get(RegistryCodes.DATE) : Expressions.nullExpression(LocalDate.class));
+    constructorArgs.add(fields.contains(RegistryCodes.FUNDS_TYPE) ? (Expression<?>)expressions.get(RegistryCodes.FUNDS_TYPE) : Expressions.nullExpression(FundsType.class));
+    constructorArgs.add(fields.contains(RegistryCodes.CREDIT_AGREEMENT) ? (Expression<?>)expressions.get(RegistryCodes.CREDIT_AGREEMENT) : Expressions.nullExpression(String.class));
+    constructorArgs.add(fields.contains(RegistryCodes.CREDIT_AGREEMENT_DATE) ? (Expression<?>)expressions.get(RegistryCodes.CREDIT_AGREEMENT_DATE) : Expressions.nullExpression(LocalDate.class));
+    constructorArgs.add(fields.contains(RegistryCodes.PAYER_ACCOUNT) ? (Expression<?>)expressions.get(RegistryCodes.PAYER_ACCOUNT) : Expressions.nullExpression(String.class));
+    constructorArgs.add(fields.contains(RegistryCodes.OBC_ACCOUNT_FLAG) ? (Expression<?>)expressions.get(RegistryCodes.OBC_ACCOUNT_FLAG) : Expressions.nullExpression(Boolean.class));
+    constructorArgs.add(fields.contains(RegistryCodes.TRANCHE_ISSUE_DATE) ? (Expression<?>)expressions.get(RegistryCodes.TRANCHE_ISSUE_DATE) : Expressions.nullExpression(LocalDate.class));
+    constructorArgs.add(fields.contains(RegistryCodes.AMOUNT) ? (Expression<?>)expressions.get(RegistryCodes.AMOUNT) : Expressions.nullExpression(BigDecimal.class));
+    constructorArgs.add(fields.contains(RegistryCodes.PAYMENT_PURPOSE) ? (Expression<?>)expressions.get(RegistryCodes.PAYMENT_PURPOSE) : Expressions.nullExpression(String.class));
+    constructorArgs.add(fields.contains(RegistryCodes.RECIPIENT_NAME) ? (Expression<?>)expressions.get(RegistryCodes.RECIPIENT_NAME) : Expressions.nullExpression(String.class));
+    constructorArgs.add(fields.contains(RegistryCodes.RECIPIENT_ACCOUNT) ? (Expression<?>)expressions.get(RegistryCodes.RECIPIENT_ACCOUNT) : Expressions.nullExpression(String.class));
+    constructorArgs.add(fields.contains(RegistryCodes.DVRU) ? (Expression<?>)expressions.get(RegistryCodes.DVRU) : Expressions.nullExpression(String.class));
+    constructorArgs.add(fields.contains(RegistryCodes.DVRU_DATE) ? (Expression<?>)expressions.get(RegistryCodes.DVRU_DATE) : Expressions.nullExpression(LocalDate.class));
+    constructorArgs.add(fields.contains(RegistryCodes.PAYMENT_TYPE) ? (Expression<?>)expressions.get(RegistryCodes.PAYMENT_TYPE) : Expressions.nullExpression(PaymentType.class));
+
+    if (needPaymentObject) {
+        // Если нужно поле PAYMENT_OBJECT — используем GroupBy для сборки коллекций
+        // Предполагается, что QPaymentObjectEntity paymentObject и QPaymentSsrArticleEntity paymentSsrArticle 
+        // являются Q-классами для связанных сущностей.
+        
+        // Делаем left join для получения paymentObjects
+        QPaymentObjectEntity paymentObject = QPaymentObjectEntity.paymentObjectEntity;
+        QPaymentSsrArticleEntity paymentSsrArticle = QPaymentSsrArticleEntity.paymentSsrArticleEntity;
+
+        query.leftJoin(paymentAnalyticEntity.paymentObjects, paymentObject);
+        query.leftJoin(paymentObject.paymentObjectSsr.paymentSsrArticles, paymentSsrArticle);
+
+        // Сформируем конструктор для вложенных объектов
+        Expression<List<PFLoanFundsRqRegistryItemBo.PaymentObjectEntityBo>> paymentObjectsExpression = list(
+            Projections.constructor(
+                PFLoanFundsRqRegistryItemBo.PaymentObjectEntityBo.class,
+                fields.contains(RegistryCodes.PAYMENT_OBJECT) ? paymentObject.name : Expressions.nullExpression(String.class),
+                fields.contains(RegistryCodes.PAYMENT_OBJECT) ? paymentObject.projectName : Expressions.nullExpression(String.class),
+                Projections.constructor(
+                    PFLoanFundsRqRegistryItemBo.PaymentObjectSsrEntityBo.class,
+                    list(
+                        Projections.constructor(
+                            PFLoanFundsRqRegistryItemBo.PaymentSsrArticleEntityBo.class,
+                            fields.contains(RegistryCodes.SSR_ARTICLE) ? paymentSsrArticle.code : Expressions.nullExpression(String.class)
+                        )
+                    )
+                )
+            )
+        );
+
+        constructorArgs.add(paymentObjectsExpression);
+
+        Map<UUID, PFLoanFundsRqRegistryItemBo> map = query
+            .select(paymentAnalyticEntity.id,
+                    paymentAnalyticEntity.clientId,
+                    paymentAnalyticEntity.paymentDocumentId,
+                    paymentAnalyticEntity.number,
+                    paymentAnalyticEntity.status,
+                    paymentAnalyticEntity.date,
+                    paymentAnalyticEntity.fundsType,
+                    paymentAnalyticEntity.creditAgreementNumber,
+                    paymentAnalyticEntity.creditAgreementDate,
+                    paymentAnalyticEntity.payerAccount,
+                    paymentAnalyticEntity.obcAccountFlag,
+                    paymentAnalyticEntity.trancheIssueDate,
+                    paymentAnalyticEntity.amount,
+                    paymentAnalyticEntity.paymentPurpose,
+                    paymentAnalyticEntity.recipientName,
+                    paymentAnalyticEntity.recipientAccount,
+                    paymentAnalyticEntity.dvruNumber,
+                    paymentAnalyticEntity.dvruDate,
+                    paymentAnalyticEntity.paymentType,
+                    paymentObject.name,
+                    paymentObject.projectName,
+                    paymentSsrArticle.code)
+            .transform(
+                groupBy(paymentAnalyticEntity.id).as(
+                    Projections.constructor(
+                        PFLoanFundsRqRegistryItemBo.class,
+                        constructorArgs.toArray(new Expression[0])
+                    )
+                )
+            );
+        return new ArrayList<>(map.values());
+
+    } else {
+        // Если PAYMENT_OBJECT не требуется, просто делаем обычную проекцию без groupBy
+        // Подставляем null для paymentObjects так как оно не нужно
+        constructorArgs.add(Expressions.nullExpression(List.class));
+
+        return query
+            .select(Projections.constructor(
+                PFLoanFundsRqRegistryItemBo.class,
+                constructorArgs.toArray(new Expression[0])
+            ))
+            .fetch();
+    }
+}
+```
+
+**Объяснения:**  
+- В методе `buildFieldExpressions` мы используем `switch` с лямбдами (Java 14+) для выбора соответствующих полей Q-класса или `null`.
+- В основном методе `findResults` мы сначала проверяем, нужно ли поле `PAYMENT_OBJECT`. Если оно требуется, то используем `GroupBy` для агрегирования результатов и получения списков. Если нет, делаем простой запрос с конструкторной проекцией.
+- Для формирования конструктора DTO используется `List<Expression<?>> constructorArgs`, куда мы добавляем необходимые выражения в нужном порядке.
+- При отсутствии определённого поля вставляем `Expressions.nullExpression(Тип.class)`.
+- Таким образом устраняется необходимость в тернарном операторе (используется switch + предварительная проверка `fields.contains(...)`), а также динамически включаются или исключаются нужные поля.
+  
+Официальную документацию по Querydsl GroupBy можно найти по ссылке:  
+[Querydsl GroupBy документация](https://querydsl.github.io/)
+
+
+
+
+
 import static com.querydsl.core.group.GroupBy.*;
 
 Map<UUID, PFLoanFundsRqRegistryItemBo> results = query
