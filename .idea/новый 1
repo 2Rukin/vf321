@@ -1,3 +1,41 @@
+SELECT 
+    pa.id AS payment_analytic_id,
+    pa.client_id AS payment_analytic_client_id,
+    pa.payment_document_id AS payment_analytic_payment_document_id,
+    pa.number AS payment_analytic_number,
+    pa.status AS payment_analytic_status,
+    pa.date AS payment_analytic_date,
+    pa.funds_type AS payment_analytic_funds_type,
+    pa.credit_agreement_number AS payment_analytic_credit_agreement_number,
+    pa.credit_agreement_date AS payment_analytic_credit_agreement_date,
+    pa.payer_account AS payment_analytic_payer_account,
+    pa.obc_account_flag AS payment_analytic_obc_account_flag,
+    pa.tranche_issue_date AS payment_analytic_tranche_issue_date,
+    pa.amount AS payment_analytic_amount,
+    pa.payment_purpose AS payment_analytic_payment_purpose,
+    pa.recipient_name AS payment_analytic_recipient_name,
+    pa.recipient_account AS payment_analytic_recipient_account,
+    pa.dvru_number AS payment_analytic_dvru_number,
+    pa.dvru_date AS payment_analytic_dvru_date,
+    pa.payment_type AS payment_analytic_payment_type,
+    po.id AS payment_object_id,
+    po.name AS payment_object_name,
+    po.project_name AS payment_object_project_name,
+    pos.id AS payment_object_ssr_id,
+    pos.date AS payment_object_ssr_date,
+    psa.id AS payment_ssr_article_id,
+    psa.code AS payment_ssr_article_code
+FROM tran_payment_analytic pa
+LEFT JOIN tran_payment_object po ON pa.id = po.payment_analytic_id
+LEFT JOIN tran_payment_object_ssr pos ON po.id = pos.payment_object_id
+LEFT JOIN tran_payment_ssr_article psa ON pos.id = psa.payment_object_ssr_id
+WHERE pa.client_id IN (:clientIds)
+ORDER BY pa.id, po.id, pos.id, psa.id;
+
+
+
+
+
 @Repository
 public class PaymentAnalyticRepository {
 
