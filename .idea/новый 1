@@ -36,6 +36,7 @@ ORDER BY pa.id, po.id, pos.id, psa.id;
 
 
 
+
 @Repository
 public class PaymentAnalyticRepository {
 
