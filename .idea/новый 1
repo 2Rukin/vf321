@@ -1,36 +1,146 @@
-SELECT 
-    pa.id AS payment_analytic_id,
-    pa.client_id AS payment_analytic_client_id,
-    pa.payment_document_id AS payment_analytic_payment_document_id,
-    pa.number AS payment_analytic_number,
-    pa.status AS payment_analytic_status,
-    pa.date AS payment_analytic_date,
-    pa.funds_type AS payment_analytic_funds_type,
-    pa.credit_agreement_number AS payment_analytic_credit_agreement_number,
-    pa.credit_agreement_date AS payment_analytic_credit_agreement_date,
-    pa.payer_account AS payment_analytic_payer_account,
-    pa.obc_account_flag AS payment_analytic_obc_account_flag,
-    pa.tranche_issue_date AS payment_analytic_tranche_issue_date,
-    pa.amount AS payment_analytic_amount,
-    pa.payment_purpose AS payment_analytic_payment_purpose,
-    pa.recipient_name AS payment_analytic_recipient_name,
-    pa.recipient_account AS payment_analytic_recipient_account,
-    pa.dvru_number AS payment_analytic_dvru_number,
-    pa.dvru_date AS payment_analytic_dvru_date,
-    pa.payment_type AS payment_analytic_payment_type,
-    po.id AS payment_object_id,
-    po.name AS payment_object_name,
-    po.project_name AS payment_object_project_name,
-    pos.id AS payment_object_ssr_id,
-    pos.date AS payment_object_ssr_date,
-    psa.id AS payment_ssr_article_id,
-    psa.code AS payment_ssr_article_code
-FROM tran_payment_analytic pa
-LEFT JOIN tran_payment_object po ON pa.id = po.payment_analytic_id
-LEFT JOIN tran_payment_object_ssr pos ON po.id = pos.payment_object_id
-LEFT JOIN tran_payment_ssr_article psa ON pos.id = psa.payment_object_ssr_id
-WHERE pa.client_id IN (:clientIds)
-ORDER BY pa.id, po.id, pos.id, psa.id;
+private Expression<PFLoanFundsRqRegistryItemBo> getProjections(List<RegistryCodes> fields) {
+    List<Expression<?>> expressions = new ArrayList<>();
+
+    // Поле id
+    try {
+        System.out.println("Добавляю поле id");
+        expressions.add(paymentAnalyticEntity.id);
+    } catch (Exception e) {
+        System.err.println("Ошибка при добавлении поля id: " + e.getMessage());
+        throw e;
+    }
+
+    // Поле clientId
+    try {
+        System.out.println("Добавляю поле clientId");
+        expressions.add(paymentAnalyticEntity.clientId);
+    } catch (Exception e) {
+        System.err.println("Ошибка при добавлении поля clientId: " + e.getMessage());
+        throw e;
+    }
+
+    // Поле paymentDocumentId
+    try {
+        System.out.println("Добавляю поле paymentDocumentId");
+        expressions.add(paymentAnalyticEntity.paymentDocumentId);
+    } catch (Exception e) {
+        System.err.println("Ошибка при добавлении поля paymentDocumentId: " + e.getMessage());
+        throw e;
+    }
+
+    // Поле number
+    try {
+        System.out.println("Добавляю поле number");
+        if (fields.contains(RegistryCodes.NUMBER)) {
+            expressions.add(paymentAnalyticEntity.number);
+        } else {
+            expressions.add(Expressions.nullExpression(Integer.class));
+        }
+    } catch (Exception e) {
+        System.err.println("Ошибка при добавлении поля number: " + e.getMessage());
+        throw e;
+    }
+
+    // Поле status
+    try {
+        System.out.println("Добавляю поле status");
+        if (fields.contains(RegistryCodes.LOAN_FUNDS_REQUEST_STATUS)) {
+            expressions.add(paymentAnalyticEntity.status);
+        } else {
+            expressions.add(Expressions.nullExpression(PaymentAnalyticStatus.class));
+        }
+    } catch (Exception e) {
+        System.err.println("Ошибка при добавлении поля status: " + e.getMessage());
+        throw e;
+    }
+
+    // Поле date
+    try {
+        System.out.println("Добавляю поле date");
+        if (fields.contains(RegistryCodes.DATE)) {
+            expressions.add(paymentAnalyticEntity.date);
+        } else {
+            expressions.add(Expressions.nullExpression(LocalDate.class));
+        }
+    } catch (Exception e) {
+        System.err.println("Ошибка при добавлении поля date: " + e.getMessage());
+        throw e;
+    }
+
+    // Поле fundsType
+    try {
+        System.out.println("Добавляю поле fundsType");
+        if (fields.contains(RegistryCodes.FUNDS_TYPE)) {
+            expressions.add(paymentAnalyticEntity.fundsType);
+        } else {
+            expressions.add(Expressions.nullExpression(FundsType.class));
+        }
+    } catch (Exception e) {
+        System.err.println("Ошибка при добавлении поля fundsType: " + e.getMessage());
+        throw e;
+    }
+
+    // Поле creditAgreementNumber
+    try {
+        System.out.println("Добавляю поле creditAgreementNumber");
+        if (fields.contains(RegistryCodes.CREDIT_AGREEMENT)) {
+            expressions.add(paymentAnalyticEntity.creditAgreementNumber);
+        } else {
+            expressions.add(Expressions.nullExpression(String.class));
+        }
+    } catch (Exception e) {
+        System.err.println("Ошибка при добавлении поля creditAgreementNumber: " + e.getMessage());
+        throw e;
+    }
+
+    // Поле paymentObjects
+    try {
+        System.out.println("Добавляю поле paymentObjects");
+        if (fields.contains(RegistryCodes.PAYMENT_OBJECT)) {
+            expressions.add(
+                Projections.list(
+                    Projections.constructor(
+                        PaymentObjectEntityBo.class,
+                        fields.contains(RegistryCodes.PAYMENT_OBJECT)
+                            ? paymentAnalyticEntity.paymentObjects.any().name
+                            : Expressions.nullExpression(String.class),
+                        fields.contains(RegistryCodes.PAYMENT_OBJECT)
+                            ? paymentAnalyticEntity.paymentObjects.any().projectName
+                            : Expressions.nullExpression(String.class),
+                        Projections.list(
+                            Projections.constructor(
+                                PaymentObjectSsrEntityBo.class,
+                                Projections.list(
+                                    Projections.constructor(
+                                        PaymentSsrArticleEntityBo.class,
+                                        fields.contains(RegistryCodes.SSR_ARTICLE)
+                                            ? paymentAnalyticEntity.paymentObjects.any()
+                                                .paymentObjectSsr.paymentSsrArticles.any().code
+                                            : Expressions.nullExpression(String.class)
+                                    )
+                                )
+                            )
+                        )
+                    )
+                )
+            );
+        } else {
+            expressions.add(Expressions.nullExpression(List.class));
+        }
+    } catch (Exception e) {
+        System.err.println("Ошибка при добавлении поля paymentObjects: " + e.getMessage());
+        throw e;
+    }
+
+    // Возврат итоговой проекции
+    try {
+        System.out.println("Создаю проекцию PFLoanFundsRqRegistryItemBo");
+        return Projections.constructor(PFLoanFundsRqRegistryItemBo.class, expressions.toArray(new Expression[0]));
+    } catch (Exception e) {
+        System.err.println("Ошибка при создании проекции PFLoanFundsRqRegistryItemBo: " + e.getMessage());
+        throw e;
+    }
+}
 
 
 
