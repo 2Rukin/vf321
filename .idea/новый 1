@@ -1,3 +1,219 @@
+### Полное решение с учетом ваших требований
+
+#### **1. Интерфейс `QueryBuilder` с поддержкой типобезопасного построения запросов**
+
+```java
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.EntityGraph;
+import jakarta.persistence.criteria.*;
+import java.util.*;
+import java.util.function.Consumer;
+import java.util.function.Function;
+
+/**
+ * QueryBuilder - интерфейс для упрощенной и типобезопасной работы с Criteria API с опциональной интеграцией QueryHelper.
+ * @param <T> Тип сущности, с которой работает запрос.
+ */
+public interface QueryBuilder<T> {
+
+    CriteriaBuilder getCriteriaBuilder();
+
+    CriteriaQuery<T> getCriteriaQuery();
+
+    Root<T> getRoot();
+
+    EntityManager getEntityManager();
+
+    /**
+     * Получение поля сущности через метамодель.
+     */
+    default <Y> Path<Y> get(SingularAttribute<T, Y> attribute) {
+        return getRoot().get(attribute);
+    }
+
+    /**
+     * Выполнение join с другой сущностью.
+     */
+    default <Y> Join<T, Y> join(PluralAttribute<T, ?, Y> attribute, JoinType joinType) {
+        return getRoot().join(attribute, joinType);
+    }
+
+    /**
+     * Добавление условия (где) к запросу.
+     */
+    default void addPredicate(Predicate predicate) {
+        CriteriaQuery<T> query = getCriteriaQuery();
+        query.where(predicate);
+    }
+
+    /**
+     * Добавление сортировки к запросу.
+     */
+    default void addOrder(SingularAttribute<T, ?> attribute, boolean ascending) {
+        CriteriaQuery<T> query = getCriteriaQuery();
+        Order order = ascending ? getCriteriaBuilder().asc(get(attribute)) : getCriteriaBuilder().desc(get(attribute));
+        query.orderBy(order);
+    }
+
+    /**
+     * Динамическая настройка EntityGraph.
+     * @param attributes Список полей для загрузки.
+     */
+    default void applyEntityGraph(List<String> attributes) {
+        EntityGraph<?> entityGraph = getEntityManager().createEntityGraph(getRoot().getJavaType());
+        attributes.forEach(entityGraph::addAttributeNodes);
+        getEntityManager().setProperty("javax.persistence.fetchgraph", entityGraph);
+    }
+
+    /**
+     * Построение агрегатного выражения (например, SUM).
+     */
+    default <Y> Expression<Y> sum(Expression<Y> expression) {
+        return getCriteriaBuilder().sum(expression);
+    }
+
+    /**
+     * Построение CASE WHEN выражения.
+     */
+    default <Y> Expression<Y> caseWhen(Consumer<CriteriaBuilder.Case<Y>> caseBuilder) {
+        CriteriaBuilder.Case<Y> caseExpression = getCriteriaBuilder().selectCase();
+        caseBuilder.accept(caseExpression);
+        return caseExpression;
+    }
+
+    /**
+     * Выполнение запроса через EntityManager.
+     */
+    default List<T> execute() {
+        return getEntityManager().createQuery(getCriteriaQuery()).getResultList();
+    }
+
+    /**
+     * Выполнение запроса с ограничением на количество записей (пагинация).
+     */
+    default List<T> executeWithPagination(int offset, int limit) {
+        return getEntityManager().createQuery(getCriteriaQuery())
+                .setFirstResult(offset)
+                .setMaxResults(limit)
+                .getResultList();
+    }
+
+    /**
+     * Упрощённая сортировка по множеству полей.
+     */
+    default void addMultipleOrderBy(Map<SingularAttribute<T, ?>, Boolean> sortingMap) {
+        List<Order> orders = new ArrayList<>();
+        sortingMap.forEach((attribute, ascending) -> {
+            Order order = ascending ? getCriteriaBuilder().asc(get(attribute)) : getCriteriaBuilder().desc(get(attribute));
+            orders.add(order);
+        });
+        getCriteriaQuery().orderBy(orders);
+    }
+
+    /**
+     * Встроенные функции для полей метамодели (реализация RegistryCodes).
+     */
+    interface RegistryFields<T> {
+
+        default Path<?> field(QueryBuilder<T> builder, SingularAttribute<T, ?> attribute) {
+            return builder.get(attribute);
+        }
+
+        default Expression<Long> countField(QueryBuilder<T> builder, SingularAttribute<T, ?> attribute) {
+            return builder.getCriteriaBuilder().count(builder.get(attribute));
+        }
+
+        default Expression<Double> averageField(QueryBuilder<T> builder, SingularAttribute<T, ? extends Number> attribute) {
+            return builder.getCriteriaBuilder().avg(builder.get(attribute));
+        }
+
+        default <Y> Expression<Y> caseWhenField(QueryBuilder<T> builder, Consumer<CriteriaBuilder.Case<Y>> caseLogic) {
+            return builder.caseWhen(caseLogic);
+        }
+    }
+}
+```
+
+---
+
+#### **2. Реализация `QueryBuilder`**
+
+```java
+public class QueryBuilderImpl<T> implements QueryBuilder<T> {
+
+    private final EntityManager entityManager;
+    private final CriteriaBuilder criteriaBuilder;
+    private final CriteriaQuery<T> criteriaQuery;
+    private final Root<T> root;
+
+    public QueryBuilderImpl(EntityManager entityManager, Class<T> entityClass) {
+        this.entityManager = entityManager;
+        this.criteriaBuilder = entityManager.getCriteriaBuilder();
+        this.criteriaQuery = criteriaBuilder.createQuery(entityClass);
+        this.root = criteriaQuery.from(entityClass);
+    }
+
+    @Override
+    public CriteriaBuilder getCriteriaBuilder() {
+        return criteriaBuilder;
+    }
+
+    @Override
+    public CriteriaQuery<T> getCriteriaQuery() {
+        return criteriaQuery;
+    }
+
+    @Override
+    public Root<T> getRoot() {
+        return root;
+    }
+
+    @Override
+    public EntityManager getEntityManager() {
+        return entityManager;
+    }
+}
+```
+
+---
+
+#### **3. Пример использования**
+
+```java
+EntityManager em = ...;
+
+// Создаём QueryBuilder
+QueryBuilder<PaymentAnalyticEntity> builder = new QueryBuilderImpl<>(em, PaymentAnalyticEntity.class);
+
+// Пример фильтрации по статусу
+builder.addPredicate(builder.getCriteriaBuilder().equal(builder.get(PaymentAnalyticEntity_.status), "ACTIVE"));
+
+// Пример сортировки
+builder.addOrder(PaymentAnalyticEntity_.date, false);
+
+// Пример динамического EntityGraph
+builder.applyEntityGraph(List.of("clientName", "paymentObjects"));
+
+// Выполнение запроса
+List<PaymentAnalyticEntity> results = builder.execute();
+
+// Выполнение с пагинацией
+List<PaymentAnalyticEntity> paginatedResults = builder.executeWithPagination(0, 10);
+```
+
+---
+
+### Итоговые возможности
+
+1. **Типобезопасная работа с запросами через Criteria API.**
+2. **Динамическое создание запросов с EntityGraph.**
+3. **Построение CASE WHEN, SUM и других выражений.**
+4. **Динамическая сортировка и пагинация.**
+5. **Возможность добавления новых методов в интерфейс через дефолтные методы.**
+
+Если потребуется добавить дополнительные примеры или улучшения, пишите!
+
+
 public enum RegistryCodesEnum {
     ID((helper) -> List.of(helper.get(PaymentAnalyticEntity_.id))),
     CLIENT_NAME((helper) -> List.of(helper.get(PaymentAnalyticEntity_.clientName))),
