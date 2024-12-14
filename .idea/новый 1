@@ -1,3 +1,147 @@
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.EntityGraph;
+import jakarta.persistence.criteria.*;
+import jakarta.persistence.metamodel.Attribute;
+import jakarta.persistence.metamodel.PluralAttribute;
+import jakarta.persistence.metamodel.SingularAttribute;
+import java.util.*;
+import java.util.function.Function;
+
+/**
+ * QueryBuilder - интерфейс для упрощенной и типобезопасной работы с Criteria API с интеграцией Jakarta API.
+ * @param <T> Тип сущности, с которой работает запрос.
+ */
+public interface QueryBuilder<T> {
+
+    CriteriaBuilder getCriteriaBuilder();
+
+    CriteriaQuery<T> getCriteriaQuery();
+
+    Root<T> getRoot();
+
+    EntityManager getEntityManager();
+
+    /**
+     * Получение поля сущности через метамодель.
+     */
+    default <Y> Path<Y> get(SingularAttribute<T, Y> attribute) {
+        return getRoot().get(attribute);
+    }
+
+    /**
+     * Универсальный метод для JOIN.
+     */
+    default <X, Y> Join<X, Y> join(From<X, ?> from, Attribute<? super X, ?> attribute, JoinType joinType) {
+        if (attribute instanceof SingularAttribute) {
+            return from.join((SingularAttribute<? super X, Y>) attribute, joinType);
+        } else if (attribute instanceof PluralAttribute) {
+            return from.join((PluralAttribute<? super X, ?, Y>) attribute, joinType);
+        } else {
+            throw new IllegalArgumentException("Unsupported attribute type: " + attribute.getClass());
+        }
+    }
+
+    /**
+     * Перегрузка для JOIN с использованием строкового имени атрибута.
+     */
+    default <X, Y> Join<X, Y> join(From<X, ?> from, String attributeName, JoinType joinType) {
+        return from.join(attributeName, joinType);
+    }
+
+    /**
+     * Добавление условия (WHERE) к запросу.
+     */
+    default void addPredicate(Predicate predicate) {
+        CriteriaQuery<T> query = getCriteriaQuery();
+        Predicate existingPredicate = query.getRestriction();
+        query.where(existingPredicate == null ? predicate : getCriteriaBuilder().and(existingPredicate, predicate));
+    }
+
+    /**
+     * Добавление сортировки.
+     */
+    default void addOrder(SingularAttribute<T, ?> attribute, boolean ascending) {
+        CriteriaQuery<T> query = getCriteriaQuery();
+        Order order = ascending ? getCriteriaBuilder().asc(get(attribute)) : getCriteriaBuilder().desc(get(attribute));
+        query.orderBy(order);
+    }
+
+    /**
+     * Динамическая настройка сложного EntityGraph.
+     * @param entityGraphName Имя графа.
+     * @param attributes Список полных путей (например, "paymentObjects.paymentSsrArticles").
+     */
+    default void applyComplexEntityGraph(String entityGraphName, List<String> attributes) {
+        EntityGraph<?> entityGraph = getEntityManager().createEntityGraph(entityGraphName);
+        for (String attributePath : attributes) {
+            String[] parts = attributePath.split("\\.");
+            if (parts.length == 1) {
+                entityGraph.addAttributeNodes(parts[0]);
+            } else {
+                Subgraph<?> subgraph = entityGraph.addSubgraph(parts[0]);
+                for (int i = 1; i < parts.length; i++) {
+                    subgraph.addAttributeNodes(parts[i]);
+                }
+            }
+        }
+        getEntityManager().setProperty("javax.persistence.fetchgraph", entityGraph);
+    }
+
+    /**
+     * Построение выражения SUM для указанного атрибута.
+     */
+    default <N extends Number> Expression<N> sum(SingularAttribute<? super T, N> attribute) {
+        return getCriteriaBuilder().sum(get(attribute));
+    }
+
+    /**
+     * Построение выражения AVG для указанного атрибута.
+     */
+    default <N extends Number> Expression<Double> avg(SingularAttribute<? super T, N> attribute) {
+        return getCriteriaBuilder().avg(get(attribute));
+    }
+
+    /**
+     * Упрощённое создание CASE WHEN выражения.
+     */
+    default <Y> Expression<Y> caseWhen(Function<CriteriaBuilder.Case<Y>, CriteriaBuilder.Case<Y>> caseLogic) {
+        CriteriaBuilder.Case<Y> caseExpression = getCriteriaBuilder().selectCase();
+        return caseLogic.apply(caseExpression);
+    }
+
+    /**
+     * Динамическая сортировка по множеству полей.
+     */
+    default void addSorting(Map<SingularAttribute<? super T, ?>, Boolean> sortingRules) {
+        List<Order> orders = new ArrayList<>();
+        sortingRules.forEach((attribute, ascending) -> {
+            Order order = ascending ? getCriteriaBuilder().asc(get(attribute)) : getCriteriaBuilder().desc(get(attribute));
+            orders.add(order);
+        });
+        getCriteriaQuery().orderBy(orders);
+    }
+
+    /**
+     * Выполнение запроса через EntityManager.
+     */
+    default List<T> execute() {
+        return getEntityManager().createQuery(getCriteriaQuery()).getResultList();
+    }
+
+    /**
+     * Выполнение запроса с пагинацией.
+     */
+    default List<T> executeWithPagination(int offset, int limit) {
+        return getEntityManager().createQuery(getCriteriaQuery())
+                .setFirstResult(offset)
+                .setMaxResults(limit)
+                .getResultList();
+    }
+}
+
+
+
+
 ### Полное решение с учетом ваших требований
 
 #### **1. Интерфейс `QueryBuilder` с поддержкой типобезопасного построения запросов**
