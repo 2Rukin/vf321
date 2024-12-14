@@ -1,3 +1,57 @@
+public class PaymentAnalyticSpecifications {
+
+    public static Specification<PaymentAnalyticEntity> hasClientName(String clientName) {
+        return (root, query, cb) -> cb.like(root.get(PaymentAnalyticEntity_.clientName), "%" + clientName + "%");
+    }
+}
+@Service
+public class PaymentAnalyticService {
+
+    @PersistenceContext
+    private EntityManager entityManager;
+
+    public List<StatusCountDto> countByStatus(UUID clientId, Set<UUID> organizationIds) {
+        if (organizationIds.isEmpty()) {
+            throw new IllegalArgumentException("organizationIds не должен быть пустым");
+        }
+
+        CriteriaBuilder cb = entityManager.getCriteriaBuilder();
+        CriteriaQuery<Tuple> query = cb.createTupleQuery();
+        Root<PaymentAnalyticEntity> root = query.from(PaymentAnalyticEntity.class);
+
+        // Выражение для группировки
+        Path<PaymentAnalyticStatus> groupBy = root.get(PaymentAnalyticEntity_.status);
+
+        // Агрегация (COUNT)
+        Expression<Long> countExpression = cb.count(root.get(PaymentAnalyticEntity_.id));
+
+        // Построение фильтрации
+        Predicate predicate = cb.conjunction();
+        if (clientId != null) {
+            predicate = cb.and(predicate, cb.equal(root.get(PaymentAnalyticEntity_.clientId), clientId));
+        }
+        predicate = cb.and(predicate, root.get(PaymentAnalyticEntity_.clientId).in(organizationIds));
+
+        // Условие WHERE и GROUP BY
+        query.multiselect(groupBy, countExpression)
+             .where(predicate)
+             .groupBy(groupBy);
+
+        // Выполнение запроса
+        List<Tuple> resultList = entityManager.createQuery(query).getResultList();
+
+        // Маппинг результата в DTO
+        return resultList.stream()
+            .map(tuple -> new StatusCountDto(
+                tuple.get(0, PaymentAnalyticStatus.class), // Статус
+                tuple.get(1, Long.class)                  // Количество
+            ))
+            .collect(Collectors.toList());
+    }
+}
+
+
+
 Set<SingularAttribute<?, ?>> attributes = Set.of(
     PaymentAnalyticEntity_.clientName,
     PaymentAnalyticEntity_.date
