@@ -1,3 +1,60 @@
+import jakarta.persistence.criteria.*;
+import jakarta.persistence.metamodel.Attribute;
+import jakarta.persistence.metamodel.CollectionAttribute;
+import jakarta.persistence.metamodel.ListAttribute;
+import jakarta.persistence.metamodel.MapAttribute;
+import jakarta.persistence.metamodel.SetAttribute;
+import jakarta.persistence.metamodel.SingularAttribute;
+import jakarta.persistence.metamodel.PluralAttribute;
+import jakarta.persistence.metamodel.Bindable;
+import jakarta.persistence.metamodel.Attribute.PersistentAttributeType;
+
+public interface UniversalJoiner {
+
+    /**
+     * Универсальный метод для JOIN с учетом типа атрибута.
+     * <X> - тип корневой сущности (или типа, от которого мы джойним)
+     * <Y> - тип целевого существа (или элемента коллекции), к которому делаем JOIN
+     */
+    @SuppressWarnings("unchecked")
+    default <X, Y> Join<X, Y> join(From<X, ?> from,
+                                   Attribute<? super X, ?> attribute,
+                                   JoinType joinType) {
+        // Проверяем тип атрибута и выполняем соответствующий JOIN
+        if (attribute instanceof SingularAttribute) {
+            // Одиночный атрибут (ManyToOne, OneToOne и т.д.)
+            SingularAttribute<? super X, Y> singularAttribute = (SingularAttribute<? super X, Y>) attribute;
+            return from.join(singularAttribute, joinType);
+
+        } else if (attribute instanceof CollectionAttribute) {
+            // Коллекция без порядка (Collection)
+            CollectionAttribute<? super X, Y> collectionAttribute = (CollectionAttribute<? super X, Y>) attribute;
+            return (Join<X, Y>) from.join(collectionAttribute, joinType);
+
+        } else if (attribute instanceof SetAttribute) {
+            // Множество (Set)
+            SetAttribute<? super X, Y> setAttribute = (SetAttribute<? super X, Y>) attribute;
+            return (Join<X, Y>) from.join(setAttribute, joinType);
+
+        } else if (attribute instanceof ListAttribute) {
+            // Список (List)
+            ListAttribute<? super X, Y> listAttribute = (ListAttribute<? super X, Y>) attribute;
+            return (Join<X, Y>) from.join(listAttribute, joinType);
+
+        } else if (attribute instanceof MapAttribute) {
+            // Карта (Map)
+            MapAttribute<? super X, Object, Y> mapAttribute = (MapAttribute<? super X, Object, Y>) attribute;
+            return (Join<X, Y>) from.join(mapAttribute, joinType);
+
+        } else {
+            // Если атрибут не поддерживается
+            throw new IllegalArgumentException("Unsupported attribute type: " + attribute);
+        }
+    }
+}
+
+
+
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.EntityGraph;
 import jakarta.persistence.criteria.*;
