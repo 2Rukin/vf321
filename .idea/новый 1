@@ -1,3 +1,46 @@
+@Repository
+public interface PaymentAnalyticRepository extends JpaRepository<PaymentAnalyticEntity, Long>, DynamicEntityGraphRepository<PaymentAnalyticEntity> {
+}
+
+public interface DynamicEntityGraphRepository<T> {
+    List<T> findAllWithDynamicGraph(String graphName, List<String> attributes);
+}
+
+public class DynamicEntityGraphRepositoryImpl<T> implements DynamicEntityGraphRepository<T> {
+
+    @PersistenceContext
+    private EntityManager entityManager;
+
+    @Override
+    public List<T> findAllWithDynamicGraph(String graphName, List<String> attributes) {
+        EntityGraph<?> graph = entityManager.getEntityGraph(graphName);
+
+        for (String attributePath : attributes) {
+            String[] parts = attributePath.split("\\.");
+            if (parts.length == 1) {
+                graph.addAttributeNodes(parts[0]);
+            } else {
+                applySubgraph(graph, parts);
+            }
+        }
+
+        TypedQuery<T> query = (TypedQuery<T>) entityManager.createQuery("SELECT e FROM " + graphName + " e", Object.class);
+        query.setHint("javax.persistence.fetchgraph", graph);
+        return query.getResultList();
+    }
+
+    private void applySubgraph(EntityGraph<?> graph, String[] parts) {
+        Subgraph<?> currentSubgraph = graph.addSubgraph(parts[0]);
+        for (int i = 1; i < parts.length; i++) {
+            currentSubgraph = currentSubgraph.addSubgraph(parts[i]);
+        }
+    }
+}
+
+
+
+
+
 import jakarta.persistence.criteria.*;
 import jakarta.persistence.metamodel.Attribute;
 import jakarta.persistence.metamodel.CollectionAttribute;
