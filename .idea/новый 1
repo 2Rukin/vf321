@@ -1,3 +1,65 @@
+Set<SingularAttribute<?, ?>> attributes = Set.of(
+    PaymentAnalyticEntity_.clientName,
+    PaymentAnalyticEntity_.date
+);
+
+EntityGraph<?> graph = entityManager.createEntityGraph(PaymentAnalyticEntity.class);
+applyEntityGraphFromMetamodel(graph, attributes);
+
+TypedQuery<PaymentAnalyticEntity> query = entityManager.createQuery("SELECT p FROM PaymentAnalyticEntity p", PaymentAnalyticEntity.class);
+query.setHint("javax.persistence.fetchgraph", graph);
+
+List<PaymentAnalyticEntity> results = query.getResultList();
+
+public void applyEntityGraphFromMetamodel(EntityGraph<?> graph, Set<SingularAttribute<?, ?>> attributes) {
+    attributes.forEach(attribute -> graph.addAttributeNodes(attribute.getName()));
+}
+
+
+public List<T> findAllWithDynamicGraph(Class<T> entityClass, String graphName, List<String> attributes) {
+    // Создаем CriteriaQuery на основе метамодели
+    CriteriaBuilder cb = entityManager.getCriteriaBuilder();
+    CriteriaQuery<T> query = cb.createQuery(entityClass);
+    Root<T> root = query.from(entityClass);
+
+    // Устанавливаем граф для запроса
+    EntityGraph<?> entityGraph = entityManager.getEntityGraph(graphName);
+    attributes.forEach(entityGraph::addAttributeNodes);
+    query.select(root);
+
+    // Выполняем запрос
+    TypedQuery<T> typedQuery = entityManager.createQuery(query);
+    typedQuery.setHint("javax.persistence.fetchgraph", entityGraph);
+
+    return typedQuery.getResultList();
+}
+public List<PaymentAnalyticEntity> findByDynamicAttributes(Set<String> attributes) {
+    CriteriaBuilder cb = entityManager.getCriteriaBuilder();
+    CriteriaQuery<PaymentAnalyticEntity> query = cb.createQuery(PaymentAnalyticEntity.class);
+    Root<PaymentAnalyticEntity> root = query.from(PaymentAnalyticEntity.class);
+
+    // Используем атрибуты для настройки выборки
+    query.select(root);
+
+    // Пример фильтрации на основе метамодели
+    if (attributes.contains("clientName")) {
+        query.where(cb.like(root.get(PaymentAnalyticEntity_.clientName), "%Test%"));
+    }
+
+    // Пример сортировки
+    query.orderBy(cb.desc(root.get(PaymentAnalyticEntity_.date)));
+
+    // Создаём запрос и выполняем его
+    return entityManager.createQuery(query).getResultList();
+}
+
+
+
+
+
+
+
+
 @Repository
 public interface PaymentAnalyticRepository extends JpaRepository<PaymentAnalyticEntity, Long>, DynamicEntityGraphRepository<PaymentAnalyticEntity> {
 }
