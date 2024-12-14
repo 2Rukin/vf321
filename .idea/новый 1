@@ -1,3 +1,29 @@
+public enum RegistryCodesEnum {
+    ID((helper) -> List.of(helper.get(PaymentAnalyticEntity_.id))),
+    CLIENT_NAME((helper) -> List.of(helper.get(PaymentAnalyticEntity_.clientName))),
+    CLIENT_TYPE((helper) -> List.of(helper.selectCase()
+        .when(helper.like(PaymentAnalyticEntity_.clientName, "VIP%"), "VIP")
+        .otherwise("Regular"))),
+    DATE((helper) -> List.of(helper.get(PaymentAnalyticEntity_.date))),
+    TOTAL_AMOUNT((helper) -> {
+        JoinHelper<PaymentAnalyticEntity, PaymentObjectEntity> join = helper.join(PaymentAnalyticEntity_.paymentObjects);
+        return List.of(join.sum(PaymentObjectEntity_.amount), helper.count(PaymentObjectEntity_.id));
+    });
+
+    private final Function<QueryHelper<PaymentAnalyticEntity>, List<Expression<?>>> expressionFunction;
+
+    RegistryCodesEnum(Function<QueryHelper<PaymentAnalyticEntity>, List<Expression<?>>> expressionFunction) {
+        this.expressionFunction = expressionFunction;
+    }
+
+    public List<Expression<?>> getExpressions(QueryHelper<PaymentAnalyticEntity> helper) {
+        return expressionFunction.apply(helper);
+    }
+}
+
+
+
+
 ```java
 private Map<RegistryCodes, Expression<?>> buildFieldExpressions(List<RegistryCodes> fields) {
     // Здесь мы для каждого поля через switch выбираем нужное поле Q-класса или nullExpression
