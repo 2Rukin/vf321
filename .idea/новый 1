@@ -1,4 +1,217 @@
 ```java
+package com.example.paymentanalytic.repository;
+
+import com.example.paymentanalytic.PaymentAnalyticEntity;
+import jakarta.persistence.EntityGraph;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
+import jakarta.persistence.TypedQuery;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.domain.Specification;
+
+import jakarta.persistence.criteria.CriteriaBuilder;
+import jakarta.persistence.criteria.CriteriaQuery;
+import jakarta.persistence.criteria.Root;
+import jakarta.persistence.criteria.Predicate;
+import org.springframework.stereotype.Repository;
+
+import java.util.ArrayList;
+import java.util.List;
+
+/**
+ * ****************************************************************************
+ * Интерфейс: PaymentAnalyticCustomRepository
+ * Автор: Владислав Турукин
+ * ****************************************************************************
+ *
+ * Описание:
+ * Кастомный репозиторный интерфейс для расширения функциональности
+ * PaymentAnalyticRepository.
+ *
+ * Предназначен для выполнения запросов с динамическим применением:
+ * - Фильтрации (Specification)
+ * - Динамического EntityGraph
+ * - Сортировки и пагинации на уровне базы данных
+ *
+ * Методы:
+ * - findAllWithGraph(...) - Выполнить поиск сущностей с учетом Specification,
+ *   пагинации, сортировки и динамического EntityGraph.
+ */
+public interface PaymentAnalyticCustomRepository {
+
+    /**
+     * Выполнить поиск сущностей PaymentAnalyticEntity с учетом фильтрации, сортировки, пагинации
+     * и динамического графа загрузки.
+     *
+     * @param spec    Спецификация (фильтр) для применения к запросу
+     * @param pageable Параметры пагинации и сортировки
+     * @param graph   Динамический граф сущностей, который определяет, какие поля и связи будут загружены
+     * @return Страница результатов, включая список сущностей и метаданные пагинации
+     * @throws IllegalArgumentException при некорректных параметрах
+     * @throws RuntimeException при ошибках выполнения запроса к базе данных
+     */
+    Page<PaymentAnalyticEntity> findAllWithGraph(Specification<PaymentAnalyticEntity> spec, Pageable pageable, EntityGraph<PaymentAnalyticEntity> graph);
+}
+
+
+/**
+ * ****************************************************************************
+ * Класс: PaymentAnalyticRepositoryImpl
+ * Автор: Владислав Турукин
+ * ****************************************************************************
+ *
+ * Описание:
+ * Реализация кастомного репозиторного интерфейса PaymentAnalyticCustomRepository.
+ * Данный класс обеспечивает возможность выполнять запросы к базе данных с учетом:
+ * - Динамических фильтров (Specification)
+ * - Динамического графа сущностей (EntityGraph)
+ * - Пагинации и сортировки на уровне БД
+ *
+ * Применяются меры к оптимизации:
+ * - Предварительная фильтрация и сортировка через Criteria API
+ * - Подсчет общего количества записей отдельным запросом
+ * - Установка EntityGraph через хинт для оптимизации загрузки связанных сущностей
+ *
+ * Исключения:
+ * - IllegalArgumentException при некорректных параметрах
+ * - RuntimeException при ошибках доступа к базе
+ *
+ * Логирование:
+ * - Логируется начало и окончание операции, а также любые исключительные ситуации.
+ */
+@Repository
+@Slf4j
+class PaymentAnalyticRepositoryImpl implements PaymentAnalyticCustomRepository {
+
+    @PersistenceContext
+    private EntityManager entityManager;
+
+    @Override
+    public Page<PaymentAnalyticEntity> findAllWithGraph(Specification<PaymentAnalyticEntity> spec, Pageable pageable, EntityGraph<PaymentAnalyticEntity> graph) {
+        log.debug("Начало выполнения метода findAllWithGraph со спецификацией: {}, пагинацией: {}, графом: {}", spec, pageable, graph);
+
+        if (spec == null) {
+            throw new IllegalArgumentException("Спецификация не может быть null");
+        }
+        if (pageable == null) {
+            throw new IllegalArgumentException("Параметры пагинации не могут быть null");
+        }
+        if (graph == null) {
+            throw new IllegalArgumentException("EntityGraph не может быть null");
+        }
+
+        try {
+            // Создание CriteriaQuery для основного запроса данных
+            CriteriaBuilder cb = entityManager.getCriteriaBuilder();
+            CriteriaQuery<PaymentAnalyticEntity> cq = cb.createQuery(PaymentAnalyticEntity.class);
+            Root<PaymentAnalyticEntity> root = cq.from(PaymentAnalyticEntity.class);
+
+            // Применяем спецификацию (фильтр)
+            Predicate predicate = spec.toPredicate(root, cq, cb);
+            if (predicate != null) {
+                cq.where(predicate);
+            }
+
+            // Применяем сортировку из Pageable
+            if (pageable.getSort().isSorted()) {
+                cq.orderBy(QueryUtils.toOrders(pageable.getSort(), root, cb));
+            }
+
+            TypedQuery<PaymentAnalyticEntity> query = entityManager.createQuery(cq);
+            query.setHint("javax.persistence.loadgraph", graph);
+
+            // Пагинация
+            query.setFirstResult((int) pageable.getOffset());
+            query.setMaxResults(pageable.getPageSize());
+
+            List<PaymentAnalyticEntity> content = query.getResultList();
+
+            // Подсчет общего количества записей для формирования Page
+            long total = executeCountQuery(spec);
+
+            Page<PaymentAnalyticEntity> pageResult = new PageImpl<>(content, pageable, total);
+
+            log.debug("Успешное выполнение метода findAllWithGraph. Найдено записей: {}, всего: {}", content.size(), total);
+            return pageResult;
+        } catch (IllegalArgumentException e) {
+            log.error("Ошибка при валидации аргументов в findAllWithGraph: {}", e.getMessage(), e);
+            throw e;
+        } catch (Exception e) {
+            log.error("Неожиданная ошибка при выполнении findAllWithGraph: {}", e.getMessage(), e);
+            throw new RuntimeException("Ошибка при выполнении запроса к базе данных: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Выполнить запрос для подсчета общего количества записей, удовлетворяющих спецификации.
+     *
+     * @param spec Спецификация для фильтрации
+     * @return количество записей, удовлетворяющих фильтру
+     * @throws RuntimeException при ошибках выполнения count-запроса
+     */
+    private long executeCountQuery(Specification<PaymentAnalyticEntity> spec) {
+        try {
+            CriteriaBuilder cb = entityManager.getCriteriaBuilder();
+            CriteriaQuery<Long> countCq = cb.createQuery(Long.class);
+            Root<PaymentAnalyticEntity> countRoot = countCq.from(PaymentAnalyticEntity.class);
+
+            Predicate predicate = spec.toPredicate(countRoot, countCq, cb);
+            if (predicate != null) {
+                countCq.where(predicate);
+            }
+
+            countCq.select(cb.count(countRoot));
+
+            return entityManager.createQuery(countCq).getSingleResult();
+        } catch (Exception e) {
+            log.error("Ошибка при выполнении count-запроса: {}", e.getMessage(), e);
+            throw new RuntimeException("Ошибка при подсчете общего количества записей: " + e.getMessage(), e);
+        }
+    }
+}
+
+
+/**
+ * Вспомогательный класс для преобразования Spring Sort в JPA Order.
+ * Данный код оптимизирован для работы с Criteria API.
+ */
+class QueryUtils {
+
+    /**
+     * Преобразовать Sort в список Order для CriteriaQuery.
+     *
+     * @param sort Sort из Pageable
+     * @param root Корневой Root для Criteria
+     * @param cb   CriteriaBuilder
+     * @return Список Order для применения к CriteriaQuery
+     * @throws IllegalArgumentException если поле для сортировки недоступно или некорректно
+     */
+    public static List<jakarta.persistence.criteria.Order> toOrders(org.springframework.data.domain.Sort sort,
+                                                                    Root<PaymentAnalyticEntity> root,
+                                                                    CriteriaBuilder cb) {
+        List<jakarta.persistence.criteria.Order> orders = new ArrayList<>();
+        sort.forEach(order -> {
+            String property = order.getProperty();
+            if (property == null || property.isEmpty()) {
+                throw new IllegalArgumentException("Поле для сортировки не может быть пустым или null");
+            }
+            if (order.isAscending()) {
+                orders.add(cb.asc(root.get(property)));
+            } else {
+                orders.add(cb.desc(root.get(property)));
+            }
+        });
+        return orders;
+    }
+}
+```
+
+
+
+```java
 import jakarta.persistence.EntityGraph;
 import jakarta.persistence.metamodel.SingularAttribute;
 
