@@ -1,3 +1,152 @@
+import jakarta.persistence.criteria.*;
+import org.springframework.data.jpa.domain.Specification;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
+
+/**
+ * ****************************************************************************
+ * Класс: PaymentAnalyticFilterSpecification
+ * Автор: Владислав Турукин
+ * ****************************************************************************
+ *
+ * Описание:
+ * Реализация спецификации для применения фильтрации к сущности PaymentAnalyticEntity
+ * на основе DTO PFLoanFundsRqRegistryFilterDto.
+ *
+ * Поддерживаемые фильтры:
+ * - Фильтрация по идентификаторам клиентов.
+ * - Номер документа.
+ * - Статусы заявки.
+ * - Даты заявок.
+ * - Счета плательщика и получателя.
+ * - Сумма от/до.
+ * - Назначение платежа.
+ * - Кредитные договора.
+ * - Прочие фильтры.
+ *
+ * Методы:
+ * - toPredicate(...) - строит динамические условия фильтрации в запросе.
+ */
+public class PaymentAnalyticFilterSpecification implements Specification<PaymentAnalyticEntity> {
+
+    private final PFLoanFundsRqRegistryFilterDto filter;
+
+    public PaymentAnalyticFilterSpecification(PFLoanFundsRqRegistryFilterDto filter) {
+        this.filter = filter;
+    }
+
+    @Override
+    public Predicate toPredicate(Root<PaymentAnalyticEntity> root, CriteriaQuery<?> cq, CriteriaBuilder cb) {
+        List<Predicate> predicates = new ArrayList<>();
+
+        // Фильтрация по идентификаторам клиентов
+        if (filter.getClientIds() != null && !filter.getClientIds().isEmpty()) {
+            List<Long> clientIdsLong = filter.getClientIds().stream().map(Long::valueOf).collect(Collectors.toList());
+            predicates.add(root.get(PaymentAnalyticEntity_.clientId).in(clientIdsLong));
+        }
+
+        // Фильтрация по номеру документа
+        if (filter.getNumber() != null && !filter.getNumber().isEmpty()) {
+            predicates.add(cb.like(cb.toString(root.get(PaymentAnalyticEntity_.number)), "%" + filter.getNumber() + "%"));
+        }
+
+        // Фильтрация по статусам заявки
+        if (filter.getLoanFundsRequestStatuses() != null) {
+            Set<PaymentAnalyticStatus> statuses = filter.getLoanFundsRequestStatuses().stream()
+                    .map(PaymentAnalyticStatus::of)
+                    .collect(Collectors.toSet());
+            predicates.add(root.get(PaymentAnalyticEntity_.status).in(statuses));
+        }
+
+        // Фильтрация по датам заявки
+        if (filter.getLoanFundsRequestDate() != null) {
+            if (filter.getLoanFundsRequestDate().getFrom() != null) {
+                predicates.add(cb.greaterThanOrEqualTo(root.get(PaymentAnalyticEntity_.date), filter.getLoanFundsRequestDate().getFrom()));
+            }
+            if (filter.getLoanFundsRequestDate().getTo() != null) {
+                predicates.add(cb.lessThanOrEqualTo(root.get(PaymentAnalyticEntity_.date), filter.getLoanFundsRequestDate().getTo()));
+            }
+        }
+
+        // Фильтрация по счетам плательщика
+        if (filter.getPayerAccounts() != null) {
+            predicates.add(root.get(PaymentAnalyticEntity_.payerAccount).in(filter.getPayerAccounts()));
+        }
+
+        // Фильтрация по счетам получателя
+        if (filter.getRecipientAccounts() != null) {
+            predicates.add(root.get(PaymentAnalyticEntity_.recipientAccount).in(filter.getRecipientAccounts()));
+        }
+
+        // Фильтрация по сумме от
+        if (filter.getAmountFrom() != null) {
+            predicates.add(cb.greaterThanOrEqualTo(root.get(PaymentAnalyticEntity_.amount), filter.getAmountFrom()));
+        }
+
+        // Фильтрация по сумме до
+        if (filter.getAmountTo() != null) {
+            predicates.add(cb.lessThanOrEqualTo(root.get(PaymentAnalyticEntity_.amount), filter.getAmountTo()));
+        }
+
+        // Фильтрация по назначению платежа
+        if (filter.getPaymentPurposeSearch() != null && !filter.getPaymentPurposeSearch().isEmpty()) {
+            predicates.add(cb.like(cb.lower(root.get(PaymentAnalyticEntity_.paymentPurpose)),
+                    "%" + filter.getPaymentPurposeSearch().toLowerCase() + "%"));
+        }
+
+        // Фильтрация по кредитным договорам
+        if (filter.getCreditAgreementIds() != null) {
+            Set<Long> creditAgreementIds = filter.getCreditAgreementIds().stream()
+                    .map(Long::valueOf)
+                    .collect(Collectors.toSet());
+            predicates.add(root.get(PaymentAnalyticEntity_.creditAgreementId).in(creditAgreementIds));
+        }
+
+        // Фильтрация по дате транша
+        if (filter.getTrancheIssueDate() != null) {
+            if (filter.getTrancheIssueDate().getFrom() != null) {
+                predicates.add(cb.greaterThanOrEqualTo(root.get(PaymentAnalyticEntity_.trancheIssueDate),
+                        filter.getTrancheIssueDate().getFrom()));
+            }
+            if (filter.getTrancheIssueDate().getTo() != null) {
+                predicates.add(cb.lessThanOrEqualTo(root.get(PaymentAnalyticEntity_.trancheIssueDate),
+                        filter.getTrancheIssueDate().getTo()));
+            }
+        }
+
+        // Фильтрация по ИНН или названию получателя
+        if (filter.getRecipientNameOrInn() != null && !filter.getRecipientNameOrInn().isEmpty()) {
+            if (filter.getRecipientNameOrInn().matches("^\\d{1,12}$")) {
+                predicates.add(cb.like(root.get(PaymentAnalyticEntity_.recipientInn), "%" + filter.getRecipientNameOrInn() + "%"));
+            } else {
+                predicates.add(cb.like(cb.lower(root.get(PaymentAnalyticEntity_.recipientName)),
+                        "%" + filter.getRecipientNameOrInn().toLowerCase() + "%"));
+            }
+        }
+
+        // Фильтрация по типу средств
+        if (filter.getFundsType() != null) {
+            predicates.add(cb.equal(root.get(PaymentAnalyticEntity_.fundsType), FundsType.of(filter.getFundsType())));
+        }
+
+        // Фильтрация по наличию платёжного поручения
+        if (filter.getHasPaymentOrder() != null) {
+            if (filter.getHasPaymentOrder()) {
+                predicates.add(cb.isNotNull(root.get(PaymentAnalyticEntity_.paymentDocumentId)));
+            } else {
+                predicates.add(cb.isNull(root.get(PaymentAnalyticEntity_.paymentDocumentId)));
+            }
+        }
+
+        // Возврат комбинированного предиката
+        return predicates.isEmpty() ? cb.conjunction() : cb.and(predicates.toArray(new Predicate[0]));
+    }
+}
+
+
 Вот реализация метода с изменённым контрактом, где используются переданные спецификации фильтрации и сортировки:
 
 ### Метод `findAllWithDynamicGraph`
