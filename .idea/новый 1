@@ -1,3 +1,153 @@
+```java
+import jakarta.persistence.EntityGraph;
+import jakarta.persistence.metamodel.SingularAttribute;
+
+import java.util.List;
+
+public interface DynamicEntityGraphBuilderInterface<T> {
+
+    /**
+     * Добавляет атрибут к графу выборки.
+     *
+     * @param attribute Атрибут, который нужно добавить в граф.
+     * @return Текущий экземпляр DynamicEntityGraphBuilderInterface для цепочки вызовов.
+     */
+    DynamicEntityGraphBuilderInterface<T> addAttribute(SingularAttribute<T, ?> attribute);
+
+    /**
+     * Добавляет подграф к графу выборки.
+     *
+     * @param attribute    Атрибут, к которому относится подграф.
+     * @param subAttributes Список атрибутов, которые должны быть включены в подграф.
+     * @param <X>          Тип сущности, относящейся к подграфу.
+     * @return Текущий экземпляр DynamicEntityGraphBuilderInterface для цепочки вызовов.
+     */
+    <X> DynamicEntityGraphBuilderInterface<T> addSubgraph(SingularAttribute<T, List<X>> attribute, List<SingularAttribute<X, ?>> subAttributes);
+
+    /**
+     * Создает и возвращает граф сущностей.
+     *
+     * @return Построенный EntityGraph.
+     */
+    EntityGraph<T> build();
+}
+
+
+
+import jakarta.persistence.EntityGraph;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.Subgraph;
+import jakarta.persistence.metamodel.SingularAttribute;
+
+import java.util.List;
+
+public class DynamicEntityGraphBuilder<T> implements DynamicEntityGraphBuilderInterface<T> {
+
+    private final EntityGraph<T> graph;
+
+    public DynamicEntityGraphBuilder(EntityManager entityManager, Class<T> rootEntity) {
+        this.graph = entityManager.createEntityGraph(rootEntity);
+    }
+
+    public DynamicEntityGraphBuilder<T> addAttribute(SingularAttribute<T, ?> attribute) {
+        graph.addAttributeNodes(attribute.getName());
+        return this;
+    }
+
+    public <X> DynamicEntityGraphBuilder<T> addSubgraph(SingularAttribute<T, List<X>> attribute, List<SingularAttribute<X, ?>> subAttributes) {
+        Subgraph<X> subgraph = graph.addSubgraph(attribute.getName());
+        for (SingularAttribute<X, ?> subAttribute : subAttributes) {
+            subgraph.addAttributeNodes(subAttribute.getName());
+        }
+        return this;
+    }
+
+    public EntityGraph<T> build() {
+        return graph;
+    }
+}
+```
+
+* * *
+
+#### 2\. **Использование утилиты в коде**
+
+Пример: создание графа для `PaymentAnalyticEntity` с подгрузкой `PaymentObjects` и их `PaymentSsrArticles`.
+
+```java
+@Service
+public class PaymentAnalyticService {
+
+    private final EntityManager entityManager;
+
+    public PaymentAnalyticService(EntityManager entityManager) {
+        this.entityManager = entityManager;
+    }
+
+    public EntityGraph<PaymentAnalyticEntity> buildGraph(boolean loadObjects, boolean loadArticles) {
+        DynamicEntityGraphBuilder<PaymentAnalyticEntity> builder =
+                new DynamicEntityGraphBuilder<>(entityManager, PaymentAnalyticEntity.class);
+
+        // Добавляем корневой атрибут
+        builder.addAttribute(PaymentAnalyticEntity_.clientName);
+
+        // Условно добавляем вложенные графы
+        if (loadObjects) {
+            List<SingularAttribute<PaymentObjectEntity, ?>> subAttributes = List.of(
+                    PaymentObjectEntity_.name,
+                    PaymentObjectEntity_.projectName
+            );
+
+            if (loadArticles) {
+                subAttributes.add(PaymentObjectEntity_.paymentSsrArticles);
+            }
+
+            builder.addSubgraph(PaymentAnalyticEntity_.paymentObjects, subAttributes);
+        }
+
+        return builder.build();
+    }
+
+    public List<PaymentAnalyticDto> findWithDynamicGraph(String clientName, boolean loadObjects, boolean loadArticles) {
+        CriteriaBuilder cb = entityManager.getCriteriaBuilder();
+        QueryHelper<PaymentAnalyticEntity> helper = new QueryHelper<>(cb, PaymentAnalyticEntity.class);
+
+        if (clientName != null) {
+            helper.addLike(PaymentAnalyticEntity_.clientName, clientName);
+        }
+
+        // Создание динамического графа
+        EntityGraph<PaymentAnalyticEntity> graph = buildGraph(loadObjects, loadArticles);
+
+        // Выполнение запроса с графом
+        TypedQuery<PaymentAnalyticEntity> query = helper.buildQuery(entityManager);
+        query.setHint("javax.persistence.loadgraph", graph);
+
+        List<PaymentAnalyticEntity> entities = query.getResultList();
+
+        // Маппинг в DTO
+        return entities.stream()
+            .map(pa -> new PaymentAnalyticDto(
+                pa.getId(),
+                pa.getClientName(),
+                pa.getPaymentObjects() != null ? pa.getPaymentObjects().stream()
+                    .map(po -> new PaymentAnalyticDto.PaymentObjectDto(
+                        po.getName(),
+                        po.getProjectName(),
+                        po.getPaymentSsrArticles() != null ? po.getPaymentSsrArticles().stream()
+                            .map(PaymentSsrArticleEntity::getCode)
+                            .collect(Collectors.toList()) : List.of()
+                    ))
+                    .collect(Collectors.toList()) : List.of()
+            ))
+            .collect(Collectors.toList());
+    }
+}
+
+
+
+
+
 public class PaymentAnalyticSpecifications {
 
     public static Specification<PaymentAnalyticEntity> hasClientName(String clientName) {
