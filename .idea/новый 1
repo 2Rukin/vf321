@@ -1,3 +1,137 @@
+Вот реализация метода с изменённым контрактом, где используются переданные спецификации фильтрации и сортировки:
+
+### Метод `findAllWithDynamicGraph`
+
+```java
+@Override
+public Page<T> findAllWithDynamicGraph(
+        EntityGraph<T> graph,
+        Specification<T> filterSpec,
+        Specification<T> sortingSpec,
+        Pageable pageable) {
+
+    log.debug("Executing findAllWithDynamicGraph with graph: {}, filterSpec: {}, sortingSpec: {}, pageable: {}",
+            graph, filterSpec, sortingSpec, pageable);
+
+    if (graph == null || pageable == null) {
+        throw new IllegalArgumentException("Graph and pageable cannot be null");
+    }
+
+    try {
+        // Объединяем фильтрацию и сортировку в одну Specification
+        Specification<T> combinedSpec = Specification.where(filterSpec).and(sortingSpec);
+
+        // Создаём CriteriaQuery для получения данных
+        CriteriaBuilder cb = entityManager.getCriteriaBuilder();
+        CriteriaQuery<T> cq = cb.createQuery(graph.getEntityType());
+        Root<T> root = cq.from(graph.getEntityType());
+
+        // Применяем спецификацию (фильтрация и сортировка)
+        if (combinedSpec != null) {
+            Predicate predicate = combinedSpec.toPredicate(root, cq, cb);
+            if (predicate != null) {
+                cq.where(predicate);
+            }
+        }
+
+        // Применяем сортировку из Pageable, если задано
+        if (pageable.getSort().isSorted()) {
+            cq.orderBy(QueryUtils.toOrders(pageable.getSort(), root, cb));
+        }
+
+        // Создаём TypedQuery для основного запроса
+        TypedQuery<T> query = entityManager.createQuery(cq);
+        query.setHint("javax.persistence.loadgraph", graph);
+
+        // Пагинация
+        query.setFirstResult((int) pageable.getOffset());
+        query.setMaxResults(pageable.getPageSize());
+
+        // Выполняем запрос
+        List<T> resultList = query.getResultList();
+
+        // Подсчёт общего количества записей
+        long total = countTotalRecords(combinedSpec, graph);
+
+        // Формируем Page с результатами
+        return new PageImpl<>(resultList, pageable, total);
+
+    } catch (Exception e) {
+        log.error("Error executing findAllWithDynamicGraph: {}", e.getMessage(), e);
+        throw new RuntimeException("Error fetching data with dynamic graph", e);
+    }
+}
+```
+
+---
+
+### Метод для подсчёта общего количества записей
+
+```java
+private long countTotalRecords(Specification<T> spec, EntityGraph<T> graph) {
+    CriteriaBuilder cb = entityManager.getCriteriaBuilder();
+    CriteriaQuery<Long> countQuery = cb.createQuery(Long.class);
+    Root<T> countRoot = countQuery.from(graph.getEntityType());
+
+    if (spec != null) {
+        Predicate predicate = spec.toPredicate(countRoot, countQuery, cb);
+        if (predicate != null) {
+            countQuery.where(predicate);
+        }
+    }
+
+    countQuery.select(cb.count(countRoot));
+    return entityManager.createQuery(countQuery).getSingleResult();
+}
+```
+
+---
+
+### Контракт метода `findAllWithDynamicGraph`
+
+```java
+/**
+ * Выполняет поиск сущностей с использованием динамического графа, фильтрации, сортировки и пагинации.
+ *
+ * @param graph       Динамический граф сущностей (EntityGraph), определяющий, какие ассоциации должны быть загружены.
+ * @param filterSpec  Спецификация для фильтрации данных.
+ * @param sortingSpec Спецификация для сортировки данных.
+ * @param pageable    Параметры пагинации.
+ * @return Страница результатов, содержащая сущности и метаданные пагинации.
+ * @throws IllegalArgumentException Если переданы некорректные параметры.
+ * @throws RuntimeException         Если возникает ошибка при выполнении запроса.
+ */
+Page<T> findAllWithDynamicGraph(
+        EntityGraph<T> graph,
+        Specification<T> filterSpec,
+        Specification<T> sortingSpec,
+        Pageable pageable);
+```
+
+---
+
+### Объяснение
+1. **Параметры метода:**
+   - `EntityGraph<T> graph`: Определяет граф сущностей, который будет использоваться для загрузки данных.
+   - `Specification<T> filterSpec`: Содержит условия фильтрации.
+   - `Specification<T> sortingSpec`: Содержит условия сортировки.
+   - `Pageable pageable`: Определяет параметры пагинации (offset, limit, сортировка).
+
+2. **Порядок выполнения:**
+   - Объединяются фильтрация и сортировка через `Specification.where(...)`.
+   - Создаётся запрос с помощью Criteria API.
+   - Применяются пагинация и сортировка.
+   - Выполняется запрос для данных.
+   - Выполняется отдельный запрос для подсчёта общего количества записей.
+
+3. **Поддержка гибкости:** Метод допускает любую комбинацию фильтрации и сортировки, так как они передаются в виде `Specification`.
+
+---
+
+Если потребуется улучшение или добавление примера теста, дайте знать!
+
+
+
 ```java
 package com.example.paymentanalytic.repository;
 
