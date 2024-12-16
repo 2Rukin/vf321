@@ -1,3 +1,80 @@
+Чтобы использовать **возможности метасущности** в аннотации `@Mapping` с MapStruct, можно обратиться к статическим полям метасущностей напрямую. Это обеспечивает типобезопасность и минимизирует ошибки при изменении полей сущностей.
+
+---
+
+### Исправленный маппер с использованием метасущностей
+
+```java
+@Mapper(componentModel = "spring", uses = {PaymentObjectMapper.class, PaymentObjectSsrMapper.class})
+public interface PaymentAnalyticMapper {
+
+    @Mapping(target = "id", source = PaymentAnalyticEntity_.ID) // Метасущность
+    @Mapping(target = "clientId", source = PaymentAnalyticEntity_.CLIENT_ID)
+    @Mapping(target = "paymentOrderId", source = PaymentAnalyticEntity_.PAYMENT_DOCUMENT_ID)
+    @Mapping(target = "number", ignore = true)
+    @Mapping(target = "loanFundsRequestStatus", ignore = true)
+    @Mapping(target = "date", source = PaymentAnalyticEntity_.DATE)
+    @Mapping(target = "fundsType", source = PaymentAnalyticEntity_.FUNDS_TYPE)
+    @Mapping(target = "creditAgreementNumber", source = PaymentAnalyticEntity_.CREDIT_AGREEMENT_NUMBER)
+    @Mapping(target = "creditAgreementDate", source = PaymentAnalyticEntity_.CREDIT_AGREEMENT_DATE)
+    @Mapping(target = "payerAccount", source = PaymentAnalyticEntity_.PAYER_ACCOUNT)
+    @Mapping(target = "obcAccountFlag", source = PaymentAnalyticEntity_.OBC_ACCOUNT_FLAG)
+    @Mapping(target = "trancheIssueDate", source = PaymentAnalyticEntity_.TRANCHE_ISSUE_DATE)
+    @Mapping(target = "amount", source = PaymentAnalyticEntity_.AMOUNT)
+    @Mapping(target = "paymentPurpose", source = PaymentAnalyticEntity_.PAYMENT_PURPOSE)
+    @Mapping(target = "recipientName", source = PaymentAnalyticEntity_.RECIPIENT_NAME)
+    @Mapping(target = "recipientAccount", source = PaymentAnalyticEntity_.RECIPIENT_ACCOUNT)
+    @Mapping(target = "dvruNumber", source = PaymentAnalyticEntity_.DVRU_NUMBER)
+    @Mapping(target = "dvruDate", source = PaymentAnalyticEntity_.DVRU_DATE)
+    @Mapping(target = "paymentType", source = PaymentAnalyticEntity_.PAYMENT_TYPE)
+    @Mapping(target = "paymentObjects", source = PaymentAnalyticEntity_.PAYMENT_OBJECTS) // Вложенный маппинг
+    PFLloanFundsRqRegistryItemDto toDto(PaymentAnalyticEntity paymentAnalyticEntity);
+
+    List<PFLloanFundsRqRegistryItemDto> toDtoList(List<PaymentAnalyticEntity> paymentAnalyticEntities);
+}
+```
+
+---
+
+### Изменение в маппере вложенных объектов `PaymentObjectMapper`
+
+Аналогично для `PaymentObjectMapper`:
+
+```java
+@Mapper(componentModel = "spring", uses = {PaymentObjectSsrMapper.class})
+public interface PaymentObjectMapper {
+
+    @Mapping(target = "name", source = PaymentObjectEntity_.NAME) // Метасущность
+    @Mapping(target = "projectName", source = PaymentObjectEntity_.PROJECT_NAME)
+    @Mapping(target = "paymentObjectSsr", source = PaymentObjectEntity_.PAYMENT_OBJECT_SSR)
+    PaymentObjectDto toDto(PaymentObjectEntity paymentObjectEntity);
+
+    default List<PaymentObjectDto> mapToDtoSet(Set<PaymentObjectEntity> entities) {
+        if (entities == null) {
+            return null;
+        }
+        return entities.stream()
+                       .map(this::toDto)
+                       .collect(Collectors.toList());
+    }
+}
+```
+
+---
+
+### Почему это работает?
+
+1. Метасущности, такие как `PaymentAnalyticEntity_.ID`, представляют собой статические поля, которые MapStruct может использовать для указания **источников данных**.  
+2. Это значительно **повышает читаемость** кода и **облегчает поддержку**, так как ошибки именования будут автоматически отловлены на этапе компиляции.  
+3. Это также делает ваш маппер **типобезопасным**, что полезно при больших структурах данных.
+
+---
+
+### Итог
+
+Теперь аннотация `@Mapping` использует метасущности (например, `PaymentAnalyticEntity_.ID`) для указания источника, что обеспечивает более чистый и безопасный маппинг. Такой подход идеально подходит для поддержки динамических сущностей и больших структур.
+
+
 Ниже приведён пример того, как расширить ваш `PaymentAnalyticRepository`, чтобы в сервисе можно было вызвать метод `findAllWithGraph(finalSpec, pageable, entityGraph, PaymentAnalyticEntity.class)` и получить результаты с учётом `EntityGraph`.
 
 ### 1. Создаём кастомный интерфейс репозитория
