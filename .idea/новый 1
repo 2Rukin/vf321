@@ -1,3 +1,157 @@
+Проблема возникает из-за использования ковариантных типов (`? super E`) в определении методов `withAttributes` и связанных с ними структур. В случае, когда мы строим граф для сущности `PaymentAnalyticEntity` и переходим к сабграфу для `PaymentObjectEntity`, нам нужны строго типизированные атрибуты без `? super`.
+
+**Ключевая идея**:  
+Каждый `GraphConfigurationBuilder<E>` оперирует строго атрибутами и сабграфами для типа `E`. Когда мы вызываем `withCollectionSubgraph` или `withSubgraph`, мы фактически "переходим" к новому билдеру для типа `X`, соответствующему целевой сущности сабграфа. Таким образом, в сабграфе можно безопасно использовать `SingularAttribute<X, ?>` без понижающих преобразований.
+
+**Исправления**:
+
+1. Уберите использование `? super E` в методе `withAttributes`. Пусть метод принимает строго `SingularAttribute<E, ?>... attrs`.
+
+2. Аналогично уберите `? super` из сигнатур конструкторов сабграфов и `SubgraphDescriptor`. Там, где мы ранее писали `List<SingularAttribute<? super T, ?>>`, используйте `List<SingularAttribute<T, ?>>`. Это возможно, поскольку при создании сабграфа мы уже точно знаем тип сущности `T`.
+
+**Пример исправленного кода фрагмента**:
+
+```java
+class GraphConfigurationBuilder<E> implements GraphConfiguration<E> {
+    private final Class<E> entityClass;
+    private final List<SingularAttribute<E, ?>> attributes = new ArrayList<>();
+    private final List<SubgraphDescriptor<?>> subgraphs = new ArrayList<>();
+
+    public GraphConfigurationBuilder(Class<E> entityClass) {
+        this.entityClass = entityClass;
+    }
+
+    @Override
+    public Class<E> getEntityClass() {
+        return entityClass;
+    }
+
+    @Override
+    public List<SingularAttribute<E, ?>> getAttributes() {
+        return attributes;
+    }
+
+    @Override
+    public List<SubgraphDescriptor<?>> getSubgraphs() {
+        return subgraphs.isEmpty() ? null : subgraphs;
+    }
+
+    @Override
+    public GraphConfiguration<E> merge(GraphConfiguration<E> other) {
+        if (!other.getEntityClass().equals(this.entityClass)) {
+            throw new IllegalArgumentException("Невозможно объединить конфигурации для разных сущностей");
+        }
+        for (SingularAttribute<E, ?> attr : other.getAttributes()) {
+            if (!this.attributes.contains(attr)) {
+                this.attributes.add(attr);
+            }
+        }
+        mergeSubgraphs(this.subgraphs, other.getSubgraphs());
+        return this;
+    }
+
+    @SafeVarargs
+    public final GraphConfigurationBuilder<E> withAttributes(SingularAttribute<E, ?>... attrs) {
+        for (SingularAttribute<E, ?> attr : attrs) {
+            if (!attributes.contains(attr)) {
+                attributes.add(attr);
+            }
+        }
+        return this;
+    }
+
+    public <X> GraphConfigurationBuilder<E> withSubgraph(SingularAttribute<E, X> field, Consumer<GraphConfigurationBuilder<X>> builderConsumer) {
+        GraphConfigurationBuilder<X> subBuilder = new GraphConfigurationBuilder<>(field.getBindableJavaType());
+        builderConsumer.accept(subBuilder);
+        SubgraphDescriptor<X> descriptor = new SubgraphDescriptor<>(field, subBuilder.getAttributes(), subBuilder.getSubgraphs());
+        subgraphs.add(descriptor);
+        return this;
+    }
+
+    public <X> GraphConfigurationBuilder<E> withCollectionSubgraph(CollectionAttribute<E, X> field, Consumer<GraphConfigurationBuilder<X>> builderConsumer) {
+        GraphConfigurationBuilder<X> subBuilder = new GraphConfigurationBuilder<>(field.getElementType().getJavaType());
+        builderConsumer.accept(subBuilder);
+        SubgraphDescriptor<X> descriptor = new SubgraphDescriptor<>(field, subBuilder.getAttributes(), subBuilder.getSubgraphs());
+        subgraphs.add(descriptor);
+        return this;
+    }
+
+    private void mergeSubgraphs(List<SubgraphDescriptor<?>> target, List<SubgraphDescriptor<?>> source) {
+        if (source == null) return;
+        for (SubgraphDescriptor<?> sd : source) {
+            Optional<SubgraphDescriptor<?>> existing = target.stream()
+                    .filter(t -> t.getField().equals(sd.getField()))
+                    .findFirst();
+            if (existing.isPresent()) {
+                existing.get().merge(sd);
+            } else {
+                target.add(sd);
+            }
+        }
+    }
+}
+
+class SubgraphDescriptor<T> {
+    private final Object field;
+    private final List<SingularAttribute<T, ?>> attributes;
+    private final List<SubgraphDescriptor<?>> subgraphs;
+
+    public SubgraphDescriptor(Object field,
+                              List<SingularAttribute<T, ?>> attributes,
+                              List<SubgraphDescriptor<?>> subgraphs) {
+        this.field = field;
+        this.attributes = attributes == null ? new ArrayList<>() : new ArrayList<>(attributes);
+        this.subgraphs = subgraphs == null ? new ArrayList<>() : new ArrayList<>(subgraphs);
+    }
+
+    public Object getField() {
+        return field;
+    }
+
+    public List<SingularAttribute<T, ?>> getAttributes() {
+        return attributes;
+    }
+
+    public List<SubgraphDescriptor<?>> getSubgraphs() {
+        return subgraphs.isEmpty() ? null : subgraphs;
+    }
+
+    @SuppressWarnings("unchecked")
+    public void merge(SubgraphDescriptor<?> other) {
+        for (SingularAttribute<?, ?> attr : other.attributes) {
+            if (!this.attributes.contains(attr)) {
+                this.attributes.add((SingularAttribute<T, ?>) attr);
+            }
+        }
+        if (other.subgraphs != null) {
+            for (SubgraphDescriptor<?> nested : other.subgraphs) {
+                Optional<SubgraphDescriptor<?>> existing = this.subgraphs.stream()
+                        .filter(sg -> sg.getField().equals(nested.getField()))
+                        .findFirst();
+                if (existing.isPresent()) {
+                    existing.get().merge(nested);
+                } else {
+                    this.subgraphs.add(nested);
+                }
+            }
+        }
+    }
+}
+```
+
+После этих изменений вы сможете писать:
+
+```java
+configurations.put(RegistryCodes.PAYMENT_OBJECT, GraphConfiguration.forEntity(PaymentAnalyticEntity.class)
+    .withCollectionSubgraph(PaymentAnalyticEntity_.paymentObjects, subGraph -> subGraph
+        .withAttributes(PaymentObjectEntity_.name, PaymentObjectEntity_.projectName)
+    )
+);
+```
+
+Здесь `subGraph` — это `GraphConfigurationBuilder<PaymentObjectEntity>`, и вы передаете ему `SingularAttribute<PaymentObjectEntity, String>`, что полностью соответствует ожидаемым параметрам типа. Таким образом, проблема с несоответствием типов будет решена.
+
+
 class PFLloanFundsRqRegistryGraphConfigurationRegistry {
     private final Map<RegistryCodes, GraphConfiguration<?>> configurations = new HashMap<>();
 
