@@ -1,3 +1,58 @@
+@Override
+public Sort getSort(List<SortingRequestDto> sortingDtos) {
+    List<Sort.Order> orders = new ArrayList<>();
+
+    if (sortingDtos != null && !sortingDtos.isEmpty()) {
+        for (SortingRequestDto dto : sortingDtos) {
+            Sort.Direction direction = dto.getSortDescending() ? Sort.Direction.DESC : Sort.Direction.ASC;
+
+            // Сопоставляем поля для сортировки через SingularAttribute
+            switch (RegistryCodes.valueOf(dto.getSortField().toUpperCase())) {
+                case NUMBER ->
+                    orders.add(new Sort.Order(direction, PaymentAnalyticEntity_.number.getName()));
+                case LOAN_FUNDS_REQUEST_STATUS ->
+                    orders.add(new Sort.Order(direction, PaymentAnalyticEntity_.status.getName()));
+                case DATE ->
+                    orders.add(new Sort.Order(direction, PaymentAnalyticEntity_.date.getName()));
+                case FUNDS_TYPE ->
+                    orders.add(new Sort.Order(direction, PaymentAnalyticEntity_.fundsType.getName()));
+                case CREDIT_AGREEMENT -> {
+                    orders.add(new Sort.Order(direction, PaymentAnalyticEntity_.creditAgreementNumber.getName()));
+                    orders.add(new Sort.Order(direction, PaymentAnalyticEntity_.creditAgreementDate.getName()));
+                }
+                case PAYER_ACCOUNT -> {
+                    orders.add(new Sort.Order(direction, PaymentAnalyticEntity_.payerAccount.getName()));
+                    orders.add(new Sort.Order(direction, PaymentAnalyticEntity_.obcAccountFlag.getName()));
+                }
+                case TRANCHE_ISSUE_DATE ->
+                    orders.add(new Sort.Order(direction, PaymentAnalyticEntity_.trancheIssueDate.getName()));
+                case AMOUNT ->
+                    orders.add(new Sort.Order(direction, PaymentAnalyticEntity_.amount.getName()));
+                case PAYMENT_PURPOSE ->
+                    orders.add(new Sort.Order(direction, PaymentAnalyticEntity_.paymentPurpose.getName()));
+                case RECIPIENT_NAME ->
+                    orders.add(new Sort.Order(direction, PaymentAnalyticEntity_.recipientName.getName()));
+                case RECIPIENT_ACCOUNT ->
+                    orders.add(new Sort.Order(direction, PaymentAnalyticEntity_.recipientAccount.getName()));
+                case DVRU -> {
+                    orders.add(new Sort.Order(direction, PaymentAnalyticEntity_.dvruNumber.getName()));
+                    orders.add(new Sort.Order(direction, PaymentAnalyticEntity_.dvruDate.getName()));
+                }
+                case PAYMENT_TYPE ->
+                    orders.add(new Sort.Order(direction, PaymentAnalyticEntity_.paymentType.getName()));
+                default ->
+                    orders.add(new Sort.Order(direction, PaymentAnalyticEntity_.clientId.getName())); // Поле по умолчанию
+            }
+        }
+    } else {
+        // Сортировка по умолчанию, если DTO пуст
+        orders.add(Sort.Order.desc(PaymentAnalyticEntity_.clientId.getName()));
+    }
+
+    return Sort.by(orders);
+}
+
+
 public interface SortingService {
     Sort getSort(List<SortingRequestDto> sortingDtos);
 }
