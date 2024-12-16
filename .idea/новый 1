@@ -1,3 +1,113 @@
+Ниже приведён пример того, как расширить ваш `PaymentAnalyticRepository`, чтобы в сервисе можно было вызвать метод `findAllWithGraph(finalSpec, pageable, entityGraph, PaymentAnalyticEntity.class)` и получить результаты с учётом `EntityGraph`.
+
+### 1. Создаём кастомный интерфейс репозитория
+
+Создайте дополнительный интерфейс, где вы объявите нужный метод:
+
+```java
+public interface PaymentAnalyticRepositoryCustom {
+    Page<PaymentAnalyticEntity> findAllWithGraph(Specification<PaymentAnalyticEntity> spec,
+                                                 Pageable pageable,
+                                                 EntityGraph<PaymentAnalyticEntity> entityGraph,
+                                                 Class<PaymentAnalyticEntity> domainClass);
+}
+```
+
+### 2. Реализуем этот интерфейс в кастомном классе репозитория
+
+Создайте реализацию. Обычно она называется `PaymentAnalyticRepositoryImpl` (по соглашению Spring Data имя должно совпадать с именем вашего основного репозитория + `Impl`):
+
+```java
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
+import jakarta.persistence.TypedQuery;
+import jakarta.persistence.criteria.*;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.domain.Specification;
+import jakarta.persistence.EntityGraph;
+
+import java.util.List;
+
+public class PaymentAnalyticRepositoryImpl implements PaymentAnalyticRepositoryCustom {
+
+    @PersistenceContext
+    private EntityManager em;
+
+    @Override
+    public Page<PaymentAnalyticEntity> findAllWithGraph(Specification<PaymentAnalyticEntity> spec,
+                                                        Pageable pageable,
+                                                        EntityGraph<PaymentAnalyticEntity> entityGraph,
+                                                        Class<PaymentAnalyticEntity> domainClass) {
+        CriteriaBuilder cb = em.getCriteriaBuilder();
+        CriteriaQuery<PaymentAnalyticEntity> cq = cb.createQuery(domainClass);
+        Root<PaymentAnalyticEntity> root = cq.from(domainClass);
+
+        Predicate predicate = (spec != null) ? spec.toPredicate(root, cq, cb) : cb.conjunction();
+        cq.where(predicate);
+
+        // Применяем сортировку, если есть
+        if (pageable.getSort().isSorted()) {
+            List<Order> orders = pageable.getSort().stream()
+                    .map(order -> order.isAscending() ? cb.asc(root.get(order.getProperty()))
+                            : cb.desc(root.get(order.getProperty())))
+                    .toList();
+            cq.orderBy(orders);
+        }
+
+        TypedQuery<PaymentAnalyticEntity> query = em.createQuery(cq);
+
+        // Применяем EntityGraph, если он есть
+        if (entityGraph != null) {
+            query.setHint("jakarta.persistence.loadgraph", entityGraph);
+        }
+
+        // Пагинация
+        query.setFirstResult((int) pageable.getOffset());
+        query.setMaxResults(pageable.getPageSize());
+
+        List<PaymentAnalyticEntity> content = query.getResultList();
+
+        // Подсчет количества (count)
+        CriteriaQuery<Long> countCq = cb.createQuery(Long.class);
+        Root<PaymentAnalyticEntity> countRoot = countCq.from(domainClass);
+        countCq.select(cb.count(countRoot));
+        if (spec != null) {
+            countCq.where(spec.toPredicate(countRoot, countCq, cb));
+        }
+        Long total = em.createQuery(countCq).getSingleResult();
+
+        return new PageImpl<>(content, pageable, total);
+    }
+}
+```
+
+### 3. Расширяем основной репозиторий
+
+Теперь ваш `PaymentAnalyticRepository` должен наследоваться от основного базового репозитория и от вновь созданного `PaymentAnalyticRepositoryCustom`:
+
+```java
+public interface PaymentAnalyticRepository 
+        extends BaseReadOnlyRepository<PaymentAnalyticEntity, UUID>,
+                PaymentAnalyticRepositoryCustom {
+}
+```
+
+Поскольку ваш `BaseReadOnlyRepository` расширяет `Repository`, Spring Data сможет сгенерировать основную часть, а `PaymentAnalyticRepositoryImpl` будет подхвачена как расширение репозитория (если вы используете стандартные пакеты и аннотации `@EnableJpaRepositories` без указания `repositoryBaseClass`, оно должно заработать автоматически).
+
+### 4. Вызов из сервиса
+
+Теперь в вашем сервисе вы можете вызывать:
+
+```java
+var res = repository.findAllWithGraph(finalSpec, pageable, entityGraph, PaymentAnalyticEntity.class);
+```
+
+и этот метод будет работать как ожидается, используя вашу реализацию для выборки данных с применением `Specification`, `Pageable`, и `EntityGraph`.
+
+
+
 Проблема в том, что Spring пытается создать бин `EntityGraphCustomRepositoryImpl`, но вы передаёте ему `Class<T>` в конструктор, который Spring не знает, как инстанцировать. Схема с передачей `Class<T>` через конструктор в таком виде не сработает из коробки.
 
 Когда вы работаете с `JpaRepository` и `JpaSpecificationExecutor`, Spring Data JPA генерирует реализации репозиториев автоматически, используя `SimpleJpaRepository` как базовый класс, или ваш кастомный базовый класс, если вы его указали. Если вы хотите добавить функциональность, связанную с `EntityGraph`, вам нужно интегрировать её в этот механизм, а не вручную создавать конструкторы, требующие `Class<T>`.
