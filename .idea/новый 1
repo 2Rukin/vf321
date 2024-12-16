@@ -1,3 +1,333 @@
+Ниже приведен пример переработанного решения с использованием более удобного DSL-подхода для построения конфигураций графов и проверки списка кодов.
+
+Основные изменения:
+1. **DSL-подход для `GraphConfiguration`**:  
+   Создан статический метод `forEntity(...)`, возвращающий билдер для конфигурации.  
+   Методы `withAttributes(...)`, `withSubgraph(...)` позволяют пошагово настраивать граф.
+   
+2. **Использование `enum RegistryCodes` вместо строковых кодов**:  
+   Вместо строковых констант используем `enum`, что делает код более типобезопасным и удобным.
+
+3. **Автоматическая регистрация конфигураций в `GraphConfigurationRegistry`**:  
+   `GraphConfigurationRegistry` хранит карту `Map<RegistryCodes, GraphConfiguration<?>>`.  
+   Добавляем метод `merge(...)` в `GraphConfiguration` для объединения нескольких конфигураций.
+
+4. **Пример использования**:  
+   Проверяем входящие коды, если они содержатся в реестре - мержим конфигурацию. В конце создаем итоговый граф через `DynamicEntityGraphBuilder`.
+
+---
+
+### Пример кода
+
+```java
+import jakarta.persistence.EntityGraph;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.Subgraph;
+import jakarta.persistence.metamodel.SingularAttribute;
+import java.util.*;
+import java.util.function.Consumer;
+
+/**
+ * Коды, на которые мы можем настроить наши конфигурации графов.
+ */
+enum RegistryCodes {
+    DEFAULT,
+    RECIPIENT,
+    DVRU,
+    OBJECT,
+    SsrArticle_CODE
+}
+
+/**
+ * Интерфейс для описания конфигурации графа.
+ */
+interface GraphConfiguration<T> {
+
+    Class<T> getEntityClass();
+
+    List<SingularAttribute<?, ?>> getAttributes();
+
+    List<SubgraphDescriptor<?>> getSubgraphs();
+
+    /**
+     * Объединить текущую конфигурацию с другой. Возвращает новую конфигурацию.
+     */
+    GraphConfiguration<T> merge(GraphConfiguration<T> other);
+
+    /**
+     * Статический билдер для создания конфигурации с DSL.
+     */
+    static <E> GraphConfigurationBuilder<E> forEntity(Class<E> entityClass) {
+        return new GraphConfigurationBuilder<>(entityClass);
+    }
+
+    class GraphConfigurationBuilder<E> implements GraphConfiguration<E> {
+        private final Class<E> entityClass;
+        private final List<SingularAttribute<?, ?>> attributes = new ArrayList<>();
+        private final List<SubgraphDescriptor<?>> subgraphs = new ArrayList<>();
+
+        public GraphConfigurationBuilder(Class<E> entityClass) {
+            this.entityClass = entityClass;
+        }
+
+        @Override
+        public Class<E> getEntityClass() {
+            return entityClass;
+        }
+
+        @Override
+        public List<SingularAttribute<?, ?>> getAttributes() {
+            return attributes;
+        }
+
+        @Override
+        public List<SubgraphDescriptor<?>> getSubgraphs() {
+            return subgraphs.isEmpty() ? null : subgraphs;
+        }
+
+        @Override
+        public GraphConfiguration<E> merge(GraphConfiguration<E> other) {
+            if (!other.getEntityClass().equals(this.entityClass)) {
+                throw new IllegalArgumentException("Невозможно объединить конфигурации для разных сущностей");
+            }
+            // Добавляем атрибуты
+            for (SingularAttribute<?, ?> attr : other.getAttributes()) {
+                if (!this.attributes.contains(attr)) {
+                    this.attributes.add(attr);
+                }
+            }
+            // Добавляем сабграфы
+            mergeSubgraphs(this.subgraphs, other.getSubgraphs());
+            return this;
+        }
+
+        private void mergeSubgraphs(List<SubgraphDescriptor<?>> target, List<SubgraphDescriptor<?>> source) {
+            if (source == null) return;
+
+            for (SubgraphDescriptor<?> sd : source) {
+                Optional<SubgraphDescriptor<?>> existing = target.stream()
+                    .filter(t -> t.getField().equals(sd.getField()))
+                    .findFirst();
+                if (existing.isPresent()) {
+                    // Объединим атрибуты и вложенные сабграфы
+                    SubgraphDescriptor<?> existingSd = existing.get();
+                    existingSd.merge(sd);
+                } else {
+                    target.add(sd);
+                }
+            }
+        }
+
+        @SafeVarargs
+        public final GraphConfigurationBuilder<E> withAttributes(SingularAttribute<? super E, ?>... attrs) {
+            for (SingularAttribute<? super E, ?> attr : attrs) {
+                if (!attributes.contains(attr)) {
+                    attributes.add(attr);
+                }
+            }
+            return this;
+        }
+
+        public <X> GraphConfigurationBuilder<E> withSubgraph(SingularAttribute<? super E, X> field, Consumer<GraphConfigurationBuilder<X>> builderConsumer) {
+            GraphConfigurationBuilder<X> subBuilder = new GraphConfigurationBuilder<>(field.getBindableJavaType());
+            builderConsumer.accept(subBuilder);
+            SubgraphDescriptor<X> descriptor = new SubgraphDescriptor<>(field, subBuilder.getAttributes(), subBuilder.getSubgraphs());
+            subgraphs.add(descriptor);
+            return this;
+        }
+    }
+}
+
+/**
+ * Класс для описания сабграфа.
+ */
+class SubgraphDescriptor<T> {
+    private final SingularAttribute<?, ?> field;
+    private final List<SingularAttribute<T, ?>> attributes;
+    private final List<SubgraphDescriptor<?>> subgraphs;
+
+    public SubgraphDescriptor(SingularAttribute<?, ?> field,
+                              List<SingularAttribute<T, ?>> attributes,
+                              List<SubgraphDescriptor<?>> subgraphs) {
+        this.field = field;
+        this.attributes = attributes == null ? new ArrayList<>() : new ArrayList<>(attributes);
+        this.subgraphs = subgraphs == null ? new ArrayList<>() : new ArrayList<>(subgraphs);
+    }
+
+    public SingularAttribute<?, ?> getField() {
+        return field;
+    }
+
+    public List<SingularAttribute<T, ?>> getAttributes() {
+        return attributes;
+    }
+
+    public List<SubgraphDescriptor<?>> getSubgraphs() {
+        return subgraphs.isEmpty() ? null : subgraphs;
+    }
+
+    @SuppressWarnings("unchecked")
+    public void merge(SubgraphDescriptor<?> other) {
+        // Объединение атрибутов
+        for (SingularAttribute<?, ?> attr : other.attributes) {
+            if (!this.attributes.contains(attr)) {
+                this.attributes.add((SingularAttribute<T, ?>) attr);
+            }
+        }
+
+        // Объединение вложенных сабграфов
+        if (other.subgraphs != null) {
+            for (SubgraphDescriptor<?> nested : other.subgraphs) {
+                Optional<SubgraphDescriptor<?>> existing = this.subgraphs.stream()
+                    .filter(sg -> sg.getField().equals(nested.getField()))
+                    .findFirst();
+                if (existing.isPresent()) {
+                    existing.get().merge(nested);
+                } else {
+                    this.subgraphs.add(nested);
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Провайдер конфигураций (реестр).
+ */
+class GraphConfigurationRegistry {
+
+    private final Map<RegistryCodes, GraphConfiguration<?>> configurations = new HashMap<>();
+
+    public GraphConfigurationRegistry() {
+        // Инициализация реестра.
+        configurations.put(RegistryCodes.DEFAULT, GraphConfiguration.forEntity(PaymentAnalyticDto.class)
+            .withAttributes(PaymentAnalyticDto_.id, PaymentAnalyticDto_.clientId, PaymentAnalyticDto_.paymentDocumentId));
+
+        configurations.put(RegistryCodes.RECIPIENT, GraphConfiguration.forEntity(PaymentAnalyticDto.class)
+            .withAttributes(PaymentAnalyticDto_.recipientName, PaymentAnalyticDto_.recipientAccount));
+
+        // Пример с вложенным сабграфом
+        configurations.put(RegistryCodes.SsrArticle_CODE,
+            GraphConfiguration.forEntity(PaymentAnalyticDto.class)
+                .withSubgraph(PaymentAnalyticDto_.paymentObjects, sg -> sg
+                    .withAttributes(PaymentObjectEntityDto_.name, PaymentObjectEntityDto_.projectName)
+                    .withSubgraph(PaymentObjectEntityDto_.paymentObjectSsr, ssg -> ssg
+                        .withSubgraph(PaymentObjectSsrEntityDto_.paymentSsrArticles, sssg -> sssg
+                            .withAttributes(PaymentSsrArticleDto_.code)
+                        )
+                    )
+                )
+        );
+        // Аналогично можно добавить DVRU, OBJECT и др.
+    }
+
+    @SuppressWarnings("unchecked")
+    public <T> GraphConfiguration<T> get(RegistryCodes code) {
+        return (GraphConfiguration<T>) configurations.get(code);
+    }
+
+    public boolean contains(RegistryCodes code) {
+        return configurations.containsKey(code);
+    }
+}
+
+/**
+ * Класс для динамического построения EntityGraph.
+ */
+class DynamicEntityGraphBuilder<T> {
+
+    private final EntityGraph<T> graph;
+    private final Set<String> addedAttributes = new HashSet<>();
+    private final Set<String> addedSubgraphs = new HashSet<>();
+
+    public DynamicEntityGraphBuilder(EntityManager entityManager, Class<T> rootEntity) {
+        this.graph = entityManager.createEntityGraph(rootEntity);
+    }
+
+    public DynamicEntityGraphBuilder<T> addGraphConfiguration(GraphConfiguration<T> configuration) {
+        // Добавляем атрибуты
+        if (configuration.getAttributes() != null) {
+            for (SingularAttribute<?, ?> attribute : configuration.getAttributes()) {
+                if (addedAttributes.add(attribute.getName())) {
+                    graph.addAttributeNodes(attribute.getName());
+                }
+            }
+        }
+        // Добавляем сабграфы
+        if (configuration.getSubgraphs() != null) {
+            for (SubgraphDescriptor<?> subgraphDescriptor : configuration.getSubgraphs()) {
+                addSubgraph(graph, subgraphDescriptor);
+            }
+        }
+
+        return this;
+    }
+
+    @SuppressWarnings("unchecked")
+    private <X> void addSubgraph(Subgraph<X> parentGraph, SubgraphDescriptor<X> descriptor) {
+        String subgraphKey = parentGraph.getClass().getSimpleName() + ":" + descriptor.getField().getName();
+        if (!addedSubgraphs.add(subgraphKey)) {
+            return;
+        }
+
+        Subgraph<X> subgraph = parentGraph.addSubgraph(descriptor.getField().getName());
+        if (descriptor.getAttributes() != null) {
+            for (SingularAttribute<X, ?> attribute : descriptor.getAttributes()) {
+                subgraph.addAttributeNodes(attribute.getName());
+            }
+        }
+
+        if (descriptor.getSubgraphs() != null) {
+            for (SubgraphDescriptor<?> nestedDescriptor : descriptor.getSubgraphs()) {
+                addSubgraph(subgraph, nestedDescriptor);
+            }
+        }
+    }
+
+    public EntityGraph<T> build() {
+        return graph;
+    }
+}
+
+///////////////////////////////////////////////////////////////
+// Ниже пример использования
+///////////////////////////////////////////////////////////////
+class ExampleUsage {
+    void example(EntityManager entityManager, List<RegistryCodes> requestCodes) {
+
+        // Базовая конфигурация (можно начать с пустой или с дефолтной)
+        GraphConfiguration<PaymentAnalyticDto> finalConfig = GraphConfiguration.forEntity(PaymentAnalyticDto.class);
+
+        GraphConfigurationRegistry registry = new GraphConfigurationRegistry();
+
+        // Перебираем коды из запроса и если есть - мерджим конфигурацию
+        for (RegistryCodes code : requestCodes) {
+            if (registry.contains(code)) {
+                finalConfig.merge(registry.get(code));
+            }
+        }
+
+        // Строим EntityGraph на основе итоговой конфигурации
+        DynamicEntityGraphBuilder<PaymentAnalyticDto> builder = new DynamicEntityGraphBuilder<>(entityManager, PaymentAnalyticDto.class);
+        builder.addGraphConfiguration(finalConfig);
+        EntityGraph<PaymentAnalyticDto> combinedGraph = builder.build();
+
+        // Далее можно использовать combinedGraph в запросе
+        // ...
+    }
+}
+```
+
+---
+
+**Итог:**  
+Мы получили удобный DSL для определения конфигураций графов, типобезопасные коды через `enum`, а также возможность динамически формировать итоговую конфигурацию путем объединения нескольких конфигураций по списку входящих кодов. В конце мы можем создать итоговый `EntityGraph`.
+
+
+
+
+
+
 @Override
 public Sort getSort(List<SortingRequestDto> sortingDtos) {
     List<Sort.Order> orders = new ArrayList<>();
