@@ -1,3 +1,302 @@
+Ниже представлен полный код решения с учётом всех предыдущих доработок. В нём:
+
+- Используется строгая типизация без `? super E`.
+- Реализованы методы для добавления сабграфов по одиночным атрибутам (`withSubgraph`), коллекционным атрибутам типа `Set` (`withSetSubgraph`) и `List` (`withListSubgraph`).
+- `withAttributes` принимает параметры типа `SingularAttribute<E, ?>`, соответствующие текущему типу сущности.
+- `SubgraphDescriptor` хранит конкретный тип T и соответствует атрибутам именно этой сущности.
+- `DynamicEntityGraphBuilder` корректно обрабатывает корневой `EntityGraph` и вложенные `Subgraph`.
+
+Вы можете адаптировать код под свои конкретные сущности и регистрировать конфигурации, как вам необходимо.
+
+```java
+import jakarta.persistence.EntityGraph;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.Subgraph;
+import jakarta.persistence.metamodel.CollectionAttribute;
+import jakarta.persistence.metamodel.ListAttribute;
+import jakarta.persistence.metamodel.PluralAttribute;
+import jakarta.persistence.metamodel.SetAttribute;
+import jakarta.persistence.metamodel.SingularAttribute;
+import java.util.*;
+import java.util.function.Consumer;
+
+/**
+ * Интерфейс конфигурации графа
+ */
+interface GraphConfiguration<T> {
+
+    Class<T> getEntityClass();
+
+    List<SingularAttribute<T, ?>> getAttributes();
+
+    List<SubgraphDescriptor<?>> getSubgraphs();
+
+    GraphConfiguration<T> merge(GraphConfiguration<T> other);
+
+    static <E> GraphConfigurationBuilder<E> forEntity(Class<E> entityClass) {
+        return new GraphConfigurationBuilder<>(entityClass);
+    }
+}
+
+/**
+ * Билдер для конфигураций графа
+ */
+class GraphConfigurationBuilder<E> implements GraphConfiguration<E> {
+
+    private final Class<E> entityClass;
+    private final List<SingularAttribute<E, ?>> attributes = new ArrayList<>();
+    private final List<SubgraphDescriptor<?>> subgraphs = new ArrayList<>();
+
+    public GraphConfigurationBuilder(Class<E> entityClass) {
+        this.entityClass = entityClass;
+    }
+
+    @Override
+    public Class<E> getEntityClass() {
+        return entityClass;
+    }
+
+    @Override
+    public List<SingularAttribute<E, ?>> getAttributes() {
+        return attributes;
+    }
+
+    @Override
+    public List<SubgraphDescriptor<?>> getSubgraphs() {
+        return subgraphs.isEmpty() ? null : subgraphs;
+    }
+
+    @Override
+    public GraphConfiguration<E> merge(GraphConfiguration<E> other) {
+        if (!other.getEntityClass().equals(this.entityClass)) {
+            throw new IllegalArgumentException("Нельзя объединить конфигурации для разных сущностей");
+        }
+        // Объединяем атрибуты
+        for (SingularAttribute<E, ?> attr : other.getAttributes()) {
+            if (!attributes.contains(attr)) {
+                attributes.add(attr);
+            }
+        }
+        // Объединяем сабграфы
+        mergeSubgraphs(this.subgraphs, other.getSubgraphs());
+        return this;
+    }
+
+    private void mergeSubgraphs(List<SubgraphDescriptor<?>> target, List<SubgraphDescriptor<?>> source) {
+        if (source == null) return;
+        for (SubgraphDescriptor<?> sd : source) {
+            Optional<SubgraphDescriptor<?>> existing = target.stream()
+                .filter(t -> t.getField().equals(sd.getField()))
+                .findFirst();
+            if (existing.isPresent()) {
+                existing.get().merge(sd);
+            } else {
+                target.add(sd);
+            }
+        }
+    }
+
+    @SafeVarargs
+    public final GraphConfigurationBuilder<E> withAttributes(SingularAttribute<E, ?>... attrs) {
+        for (SingularAttribute<E, ?> attr : attrs) {
+            if (!attributes.contains(attr)) {
+                attributes.add(attr);
+            }
+        }
+        return this;
+    }
+
+    /**
+     * Сабграф для одиночной связи (OneToOne/ManyToOne)
+     */
+    public <X> GraphConfigurationBuilder<E> withSubgraph(SingularAttribute<E, X> field, Consumer<GraphConfigurationBuilder<X>> builderConsumer) {
+        GraphConfigurationBuilder<X> subBuilder = new GraphConfigurationBuilder<>(field.getBindableJavaType());
+        builderConsumer.accept(subBuilder);
+        SubgraphDescriptor<X> descriptor = new SubgraphDescriptor<>(field, subBuilder.getAttributes(), subBuilder.getSubgraphs());
+        subgraphs.add(descriptor);
+        return this;
+    }
+
+    /**
+     * Сабграф для связи SetAttribute (OneToMany/ManyToMany, представленной как Set)
+     */
+    public <X> GraphConfigurationBuilder<E> withSetSubgraph(SetAttribute<E, X> field, Consumer<GraphConfigurationBuilder<X>> builderConsumer) {
+        return withPluralSubgraph(field, builderConsumer);
+    }
+
+    /**
+     * Сабграф для связи ListAttribute (OneToMany/ManyToMany, представленной как List)
+     */
+    public <X> GraphConfigurationBuilder<E> withListSubgraph(ListAttribute<E, X> field, Consumer<GraphConfigurationBuilder<X>> builderConsumer) {
+        return withPluralSubgraph(field, builderConsumer);
+    }
+
+    /**
+     * Общий метод для обработки PluralAttribute (SetAttribute, ListAttribute)
+     */
+    private <X, C extends Collection<X>> GraphConfigurationBuilder<E> withPluralSubgraph(PluralAttribute<E, X, C> field,
+                                                                                         Consumer<GraphConfigurationBuilder<X>> builderConsumer) {
+        GraphConfigurationBuilder<X> subBuilder = new GraphConfigurationBuilder<>(field.getElementType().getJavaType());
+        builderConsumer.accept(subBuilder);
+        SubgraphDescriptor<X> descriptor = new SubgraphDescriptor<>(field, subBuilder.getAttributes(), subBuilder.getSubgraphs());
+        subgraphs.add(descriptor);
+        return this;
+    }
+}
+
+/**
+ * Описание сабграфа
+ */
+class SubgraphDescriptor<T> {
+    private final Object field; // Может быть SingularAttribute или PluralAttribute
+    private final List<SingularAttribute<T, ?>> attributes;
+    private final List<SubgraphDescriptor<?>> subgraphs;
+
+    public SubgraphDescriptor(Object field,
+                              List<SingularAttribute<T, ?>> attributes,
+                              List<SubgraphDescriptor<?>> subgraphs) {
+        this.field = field;
+        this.attributes = attributes == null ? new ArrayList<>() : new ArrayList<>(attributes);
+        this.subgraphs = subgraphs == null ? new ArrayList<>() : new ArrayList<>(subgraphs);
+    }
+
+    public Object getField() {
+        return field;
+    }
+
+    public List<SingularAttribute<T, ?>> getAttributes() {
+        return attributes;
+    }
+
+    public List<SubgraphDescriptor<?>> getSubgraphs() {
+        return subgraphs.isEmpty() ? null : subgraphs;
+    }
+
+    @SuppressWarnings("unchecked")
+    public void merge(SubgraphDescriptor<?> other) {
+        // Объединение атрибутов
+        for (SingularAttribute<?, ?> attr : other.attributes) {
+            if (!this.attributes.contains(attr)) {
+                this.attributes.add((SingularAttribute<T, ?>) attr);
+            }
+        }
+
+        // Объединение сабграфов
+        if (other.subgraphs != null) {
+            for (SubgraphDescriptor<?> nested : other.subgraphs) {
+                Optional<SubgraphDescriptor<?>> existing = this.subgraphs.stream()
+                    .filter(sg -> sg.getField().equals(nested.getField()))
+                    .findFirst();
+                if (existing.isPresent()) {
+                    existing.get().merge(nested);
+                } else {
+                    this.subgraphs.add(nested);
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Класс для динамического построения EntityGraph
+ */
+class DynamicEntityGraphBuilder<T> {
+    private final EntityGraph<T> graph;
+    private final Set<String> addedAttributes = new HashSet<>();
+    private final Set<String> addedSubgraphs = new HashSet<>();
+
+    public DynamicEntityGraphBuilder(EntityManager entityManager, Class<T> rootEntity) {
+        this.graph = entityManager.createEntityGraph(rootEntity);
+    }
+
+    public DynamicEntityGraphBuilder<T> addGraphConfiguration(GraphConfiguration<T> configuration) {
+        // Добавляем атрибуты
+        if (configuration.getAttributes() != null) {
+            for (SingularAttribute<T, ?> attribute : configuration.getAttributes()) {
+                if (addedAttributes.add(attribute.getName())) {
+                    graph.addAttributeNodes(attribute.getName());
+                }
+            }
+        }
+
+        // Добавляем сабграфы
+        if (configuration.getSubgraphs() != null) {
+            for (SubgraphDescriptor<?> subgraphDescriptor : configuration.getSubgraphs()) {
+                addSubgraph(graph, subgraphDescriptor);
+            }
+        }
+
+        return this;
+    }
+
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private <X> void addSubgraph(Object parentGraph, SubgraphDescriptor<X> descriptor) {
+        final String fieldName = (descriptor.getField() instanceof SingularAttribute)
+            ? ((SingularAttribute) descriptor.getField()).getName()
+            : ((PluralAttribute) descriptor.getField()).getName();
+
+        String subgraphKey = parentGraph.getClass().getSimpleName() + ":" + fieldName;
+        if (!addedSubgraphs.add(subgraphKey)) {
+            return;
+        }
+
+        Subgraph<X> subgraph;
+        if (parentGraph instanceof EntityGraph) {
+            EntityGraph<?> entityGraph = (EntityGraph<?>) parentGraph;
+            subgraph = (Subgraph<X>) entityGraph.addSubgraph(fieldName);
+        } else if (parentGraph instanceof Subgraph) {
+            Subgraph<?> parent = (Subgraph<?>) parentGraph;
+            subgraph = (Subgraph<X>) parent.addSubgraph(fieldName);
+        } else {
+            throw new IllegalStateException("Unknown graph type: " + parentGraph.getClass());
+        }
+
+        if (descriptor.getAttributes() != null) {
+            for (SingularAttribute<X, ?> attribute : descriptor.getAttributes()) {
+                subgraph.addAttributeNodes(attribute.getName());
+            }
+        }
+
+        if (descriptor.getSubgraphs() != null) {
+            for (SubgraphDescriptor<?> nestedDescriptor : descriptor.getSubgraphs()) {
+                addSubgraph(subgraph, nestedDescriptor);
+            }
+        }
+    }
+
+    public EntityGraph<T> build() {
+        return graph;
+    }
+}
+
+/**
+ * Пример использования:
+ * 
+ * configurations.put(RegistryCodes.PAYMENT_OBJECT, GraphConfiguration.forEntity(PaymentAnalyticEntity.class)
+ *     .withSetSubgraph(PaymentAnalyticEntity_.paymentObjects, subGraph -> subGraph
+ *         .withAttributes(PaymentObjectEntity_.name, PaymentObjectEntity_.projectName)
+ *     )
+ * );
+ * 
+ * configurations.put(RegistryCodes.SSR_ARTICLE, GraphConfiguration.forEntity(PaymentAnalyticEntity.class)
+ *     .withSetSubgraph(PaymentAnalyticEntity_.paymentObjects, subGraph -> subGraph
+ *         .withAttributes(PaymentObjectEntity_.name, PaymentObjectEntity_.projectName)
+ *         .withSubgraph(PaymentObjectEntity_.paymentObjectSsr, ssrSubGraph -> ssrSubGraph
+ *             .withSetSubgraph(PaymentObjectSsrEntity_.paymentSsrArticles, articlesSubGraph ->
+ *                 articlesSubGraph.withAttributes(PaymentSsrArticleEntity_.code)
+ *             )
+ *         )
+ *     )
+ * );
+ */
+
+```
+
+Данный код — основа решения. Вы можете расширять его и добавлять свои методы или изменять реализацию под ваши нужды.
+
+
+
+
 Проблема возникает из-за использования ковариантных типов (`? super E`) в определении методов `withAttributes` и связанных с ними структур. В случае, когда мы строим граф для сущности `PaymentAnalyticEntity` и переходим к сабграфу для `PaymentObjectEntity`, нам нужны строго типизированные атрибуты без `? super`.
 
 **Ключевая идея**:  
