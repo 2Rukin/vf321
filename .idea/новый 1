@@ -1,3 +1,131 @@
+Проблема в том, что Spring пытается создать бин `EntityGraphCustomRepositoryImpl`, но вы передаёте ему `Class<T>` в конструктор, который Spring не знает, как инстанцировать. Схема с передачей `Class<T>` через конструктор в таком виде не сработает из коробки.
+
+Когда вы работаете с `JpaRepository` и `JpaSpecificationExecutor`, Spring Data JPA генерирует реализации репозиториев автоматически, используя `SimpleJpaRepository` как базовый класс, или ваш кастомный базовый класс, если вы его указали. Если вы хотите добавить функциональность, связанную с `EntityGraph`, вам нужно интегрировать её в этот механизм, а не вручную создавать конструкторы, требующие `Class<T>`.
+
+Есть два основных подхода:
+
+### Подход 1: Использовать `JpaEntityInformation` для получения класса сущности
+
+Вы можете создать базовый репозиторий, который получает `JpaEntityInformation<T, ?>` и `EntityManager` от Spring Data JPA. Тогда `Class<T>` можно извлечь из `entityInformation.getJavaType()`.
+
+Пример:
+
+```java
+@NoRepositoryBean
+public class EntityGraphCustomRepositoryImpl<T, ID extends Serializable>
+        implements EntityGraphCustomRepository<T> {
+
+    protected final EntityManager em;
+    protected final Class<T> domainClass;
+
+    public EntityGraphCustomRepositoryImpl(JpaEntityInformation<T, ID> entityInformation, EntityManager em) {
+        this.em = em;
+        this.domainClass = entityInformation.getJavaType();
+    }
+
+    @Override
+    public Page<T> findAllWithGraph(Specification<T> spec, Pageable pageable, EntityGraph<T> entityGraph) {
+        CriteriaBuilder cb = em.getCriteriaBuilder();
+        CriteriaQuery<T> cq = cb.createQuery(domainClass);
+        Root<T> root = cq.from(domainClass);
+
+        Predicate predicate = spec != null ? spec.toPredicate(root, cq, cb) : cb.conjunction();
+        cq.where(predicate);
+
+        if (pageable.getSort().isSorted()) {
+            List<Order> orders = pageable.getSort().stream()
+                    .map(order -> order.isAscending() ? cb.asc(root.get(order.getProperty()))
+                            : cb.desc(root.get(order.getProperty())))
+                    .toList();
+            cq.orderBy(orders);
+        }
+
+        TypedQuery<T> query = em.createQuery(cq);
+        if (entityGraph != null) {
+            query.setHint("jakarta.persistence.loadgraph", entityGraph);
+        }
+        query.setFirstResult((int) pageable.getOffset());
+        query.setMaxResults(pageable.getPageSize());
+
+        List<T> content = query.getResultList();
+
+        // Count
+        CriteriaQuery<Long> countCq = cb.createQuery(Long.class);
+        Root<T> countRoot = countCq.from(domainClass);
+        countCq.select(cb.count(countRoot));
+        if (spec != null) {
+            countCq.where(spec.toPredicate(countRoot, countCq, cb));
+        }
+
+        Long total = em.createQuery(countCq).getSingleResult();
+
+        return new PageImpl<>(content, pageable, total);
+    }
+}
+```
+
+### Обновление конфигурации `PaymentAnalyticRepository`
+
+```java
+public interface PaymentAnalyticRepository 
+        extends BaseReadOnlyRepository<PaymentAnalyticEntity, UUID>,
+                EntityGraphCustomRepository<PaymentAnalyticEntity>,
+                JpaSpecificationExecutor<PaymentAnalyticEntity> {
+}
+```
+
+`BaseReadOnlyRepository` должен быть помечен `@NoRepositoryBean`, если он абстрактный:
+
+```java
+@NoRepositoryBean
+public interface BaseReadOnlyRepository<T, ID extends Serializable> 
+        extends Repository<T, ID> {
+}
+```
+
+### Включение кастомного базового класса репозиториев
+
+В вашем `@EnableJpaRepositories` (обычно в конфигурационном классе Spring), укажите:
+
+```java
+@EnableJpaRepositories(
+    basePackages = "your.package",
+    repositoryBaseClass = EntityGraphCustomRepositoryImpl.class
+)
+```
+
+Таким образом, Spring Data JPA будет использовать `EntityGraphCustomRepositoryImpl` как базовый класс для ваших репозиториев, и внедрит `JpaEntityInformation` и `EntityManager` автоматически.
+
+### Сервис
+
+В сервисе можно использовать ваш репозиторий напрямую:
+
+```java
+@Service
+@RequiredArgsConstructor
+public class PaymentAnalyticServiceImpl implements PaymentAnalyticService {
+
+    private final PaymentAnalyticRepository repository;
+    private final EntityManager entityManager;
+    private final SortingService sortingService;
+
+    public Page<PaymentAnalyticEntity> getWithGraph(Specification<PaymentAnalyticEntity> spec, Pageable pageable) {
+        EntityGraph<PaymentAnalyticEntity> entityGraph = entityManager.createEntityGraph(PaymentAnalyticEntity.class);
+        entityGraph.addAttributeNodes("paymentObjects"); // Пример
+
+        return repository.findAllWithGraph(spec, pageable, entityGraph);
+    }
+}
+```
+
+### Итог
+
+- Мы избавились от ручного конструктора, требующего `Class<T>`.
+- Используем `JpaEntityInformation` и `EntityManager` для получения класса сущности.
+- Через `@EnableJpaRepositories` настраиваем `repositoryBaseClass`, чтобы Spring использовал нашу кастомную реализацию.
+- Теперь Spring сможет автоматически создать бин для репозитория без ошибок.
+
+
 Если вы хотите использовать `EntityGraph` для подгрузки связанной структуры, а затем получить DTO, то более логичным подходом будет:
 
 1. Сначала загрузить данные как сущности (`PaymentAnalyticEntity`), применяя `EntityGraph` для подгрузки нужных связей.
