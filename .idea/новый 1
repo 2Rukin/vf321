@@ -1,3 +1,80 @@
+class PFLloanFundsRqRegistryGraphConfigurationRegistry {
+    private final Map<RegistryCodes, GraphConfiguration<?>> configurations = new HashMap<>();
+
+    public PFLloanFundsRqRegistryGraphConfigurationRegistry() {
+        configurations.put(RegistryCodes.DEFAULT, GraphConfiguration.forEntity(PaymentAnalyticEntity.class)
+            .withAttributes(
+                PaymentAnalyticEntity_.id,
+                PaymentAnalyticEntity_.clientId,
+                PaymentAnalyticEntity_.paymentDocumentId
+            )
+        );
+
+        configurations.put(RegistryCodes.NUMBER, GraphConfiguration.forEntity(PaymentAnalyticEntity.class)
+            .withAttributes(PaymentAnalyticEntity_.number));
+
+        configurations.put(RegistryCodes.LOAN_FUNDS_REQUEST_STATUS, GraphConfiguration.forEntity(PaymentAnalyticEntity.class)
+            .withAttributes(PaymentAnalyticEntity_.status));
+
+        configurations.put(RegistryCodes.DATE, GraphConfiguration.forEntity(PaymentAnalyticEntity.class)
+            .withAttributes(PaymentAnalyticEntity_.date));
+
+        configurations.put(RegistryCodes.FUNDS_TYPE, GraphConfiguration.forEntity(PaymentAnalyticEntity.class)
+            .withAttributes(PaymentAnalyticEntity_.fundsType));
+
+        configurations.put(RegistryCodes.CREDIT_AGREEMENT, GraphConfiguration.forEntity(PaymentAnalyticEntity.class)
+            .withAttributes(PaymentAnalyticEntity_.creditAgreementNumber, PaymentAnalyticEntity_.creditAgreementDate));
+
+        configurations.put(RegistryCodes.PAYER_ACCOUNT, GraphConfiguration.forEntity(PaymentAnalyticEntity.class)
+            .withAttributes(PaymentAnalyticEntity_.payerAccount, PaymentAnalyticEntity_.obcAccountFlag));
+
+        configurations.put(RegistryCodes.TRANCHE_ISSUE_DATE, GraphConfiguration.forEntity(PaymentAnalyticEntity.class)
+            .withAttributes(PaymentAnalyticEntity_.trancheIssueDate));
+
+        configurations.put(RegistryCodes.AMOUNT, GraphConfiguration.forEntity(PaymentAnalyticEntity.class)
+            .withAttributes(PaymentAnalyticEntity_.amount));
+
+        configurations.put(RegistryCodes.PAYMENT_PURPOSE, GraphConfiguration.forEntity(PaymentAnalyticEntity.class)
+            .withAttributes(PaymentAnalyticEntity_.paymentPurpose));
+
+        configurations.put(RegistryCodes.RECIPIENT_ACCOUNT, GraphConfiguration.forEntity(PaymentAnalyticEntity.class)
+            .withAttributes(PaymentAnalyticEntity_.recipientAccount));
+
+        configurations.put(RegistryCodes.DVRU, GraphConfiguration.forEntity(PaymentAnalyticEntity.class)
+            .withAttributes(PaymentAnalyticEntity_.dvruNumber, PaymentAnalyticEntity_.dvruDate));
+
+        // paymentObjects - коллекция, значит используем withCollectionSubgraph
+        configurations.put(RegistryCodes.PAYMENT_OBJECT, GraphConfiguration.forEntity(PaymentAnalyticEntity.class)
+            .withCollectionSubgraph(PaymentAnalyticEntity_.paymentObjects, subGraph -> subGraph
+                .withAttributes(PaymentObjectEntity_.name, PaymentObjectEntity_.projectName)
+            )
+        );
+
+        configurations.put(RegistryCodes.SSR_ARTICLE, GraphConfiguration.forEntity(PaymentAnalyticEntity.class)
+            .withCollectionSubgraph(PaymentAnalyticEntity_.paymentObjects, subGraph -> subGraph
+                .withAttributes(PaymentObjectEntity_.name, PaymentObjectEntity_.projectName)
+                // paymentObjectSsr - одиночная связь, используем withSubgraph
+                .withSubgraph(PaymentObjectEntity_.paymentObjectSsr, objectSubGraph -> objectSubGraph
+                    // paymentSsrArticles - коллекция
+                    .withCollectionSubgraph(PaymentObjectSsrEntity_.paymentSsrArticles, paymentSsrArticlesSubGraph ->
+                        paymentSsrArticlesSubGraph.withAttributes(PaymentSsrArticleEntity_.code)
+                    )
+                )
+            )
+        );
+    }
+
+    public boolean contains(RegistryCodes code) {
+        return configurations.containsKey(code);
+    }
+
+    @SuppressWarnings("unchecked")
+    public <T> GraphConfiguration<T> get(RegistryCodes code) {
+        return (GraphConfiguration<T>) configurations.get(code);
+    }
+}
+
+
 class DynamicEntityGraphBuilder<T> {
 
     private final EntityGraph<T> graph;
