@@ -1,3 +1,184 @@
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.PageRequest;
+
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
+import jakarta.persistence.EntityGraph;
+import jakarta.persistence.TypedQuery;
+import jakarta.persistence.criteria.CriteriaBuilder;
+import jakarta.persistence.criteria.CriteriaQuery;
+import jakarta.persistence.criteria.Root;
+import jakarta.persistence.criteria.Predicate;
+
+import java.util.List;
+import java.util.Set;
+import java.util.UUID;
+
+@Service
+public class PaymentAnalyticService {
+
+    private final PaymentAnalyticRepository paymentAnalyticRepository;
+    private final SortingService sortingService;
+    @PersistenceContext
+    private EntityManager entityManager;
+
+    public PaymentAnalyticService(PaymentAnalyticRepository paymentAnalyticRepository,
+                                  SortingService sortingService) {
+        this.paymentAnalyticRepository = paymentAnalyticRepository;
+        this.sortingService = sortingService;
+    }
+
+    @Transactional(readOnly = true)
+    public PFLoanFundsRqRegistryResponse getFilteredSortingPageByRegistryCodes(Set<UUID> orgIds,
+                                                                               PaginationRequestDto pagination,
+                                                                               List<SortingRequestDto> sorting,
+                                                                               PFLoanFundsRqRegistryFilterDto requestFilter,
+                                                                               List<RegistryCodes> fields) {
+        // 0. Спецификация по orgIds
+        Specification<PaymentAnalyticEntity> orgIdsSpecification = (root, query, cb) ->
+                orgIds != null && !orgIds.isEmpty()
+                        ? root.get(PaymentAnalyticEntity_.clientId).in(orgIds)
+                        : cb.conjunction();
+
+        // 1. Спецификации из фильтров
+        // Предположим, у вас есть классы спецификаций: 
+        // PFLoanFundsRqRegistryPaymentAnalyticFilterSpecification,
+        // PFLoanFundsRqRegistryPaymentObjectFilterSpecification,
+        // PFLoanFundsRqRegistryPaymentSsrArticleFilterSpecification
+        // которые реализуют Specification<PaymentAnalyticEntity> на основе requestFilter.
+        
+        Specification<PaymentAnalyticEntity> analyticSpec = new PFLoanFundsRqRegistryPaymentAnalyticFilterSpecification(requestFilter);
+        Specification<PaymentAnalyticEntity> objectSpec = new PFLoanFundsRqRegistryPaymentObjectFilterSpecification(requestFilter);
+        Specification<PaymentAnalyticEntity> ssrSpec = new PFLoanFundsRqRegistryPaymentSsrArticleFilterSpecification(requestFilter);
+
+        // Собираем спецификации, которые не null и что-то фильтруют
+        Specification<PaymentAnalyticEntity> builder = new GenericSpecificationBuilder<PaymentAnalyticEntity>()
+                .add(orgIdsSpecification)
+                .add(analyticSpec)
+                .add(objectSpec)
+                .add(ssrSpec)
+                .build();
+
+        // 2. Сортировка
+        // Конвертируем DTO сортировки в Sort
+        var sort = sortingService.getSort(sorting);
+
+        // Pageable
+        Pageable pageable = PageRequest.of(
+                pagination != null ? pagination.getOffset() : 0,
+                pagination != null ? pagination.getLimit() : 10,
+                sort
+        );
+
+        // 3. Проверяем поля для загрузки графа
+        boolean needPaymentObject = fields.contains(RegistryCodes.PAYMENT_OBJECT);
+        boolean needSsrArticle = fields.contains(RegistryCodes.SSR_ARTICLE);
+
+        // Если нужны вложенные сущности, строим динамический граф
+        Page<PaymentAnalyticDto> resultPage;
+        if (needPaymentObject || needSsrArticle) {
+            // Построим EntityGraph динамически
+            DynamicEntityGraphBuilder<PaymentAnalyticEntity> graphBuilder =
+                    new DynamicEntityGraphBuilder<>(entityManager, PaymentAnalyticEntity.class);
+
+            // Допустим, код DynamicEntityGraphBuilder таков, что вы можете добавить конфигурации
+            // Если нужны paymentObjects
+            if (needPaymentObject) {
+                graphBuilder.addGraphConfiguration("paymentObjects");
+                // Если нужно еще глубже:
+                // graphBuilder.addGraphConfiguration("paymentObjects.paymentObjectSsr");
+                // graphBuilder.addGraphConfiguration("paymentObjects.paymentObjectSsr.paymentSsrArticles");
+            }
+
+            if (needSsrArticle) {
+                // Добавим атрибуты для ssrArticles
+                graphBuilder.addGraphConfiguration("paymentObjects.paymentObjectSsr.paymentSsrArticles");
+            }
+
+            EntityGraph<PaymentAnalyticEntity> entityGraph = graphBuilder.build();
+
+            // Выполняем запрос с использованием Specification и EntityGraph вручную, 
+            // так как JpaSpecificationExecutor не дает напрямую добавить hints.
+            // Но можно получить Predicate из Specification и построить TypedQuery вручную:
+
+            CriteriaBuilder cb = entityManager.getCriteriaBuilder();
+            CriteriaQuery<PaymentAnalyticDto> cq = cb.createQuery(PaymentAnalyticDto.class);
+            Root<PaymentAnalyticEntity> root = cq.from(PaymentAnalyticEntity.class);
+
+            Predicate pred = builder.toPredicate(root, cq, cb);
+            cq.where(pred);
+
+            // Projection в DTO через конструктор (аналогично тому, что в @Query репозитории)
+            // Предположим, у PaymentAnalyticDto есть соответствующий @AllArgsConstructor или builder.
+            // Для простоты покажем конструкцию через cb.construct:
+            cq.select(cb.construct(
+                    PaymentAnalyticDto.class,
+                    root.get(PaymentAnalyticEntity_.id),
+                    root.get(PaymentAnalyticEntity_.clientId),
+                    root.get(PaymentAnalyticEntity_.paymentDocumentId),
+                    root.get(PaymentAnalyticEntity_.number),
+                    root.get(PaymentAnalyticEntity_.status),
+                    root.get(PaymentAnalyticEntity_.date),
+                    root.get(PaymentAnalyticEntity_.fundsType),
+                    root.get(PaymentAnalyticEntity_.creditAgreementNumber),
+                    root.get(PaymentAnalyticEntity_.creditAgreementDate),
+                    root.get(PaymentAnalyticEntity_.payerAccount),
+                    root.get(PaymentAnalyticEntity_.obcAccountFlag),
+                    root.get(PaymentAnalyticEntity_.trancheIssueDate),
+                    root.get(PaymentAnalyticEntity_.amount),
+                    root.get(PaymentAnalyticEntity_.paymentPurpose),
+                    root.get(PaymentAnalyticEntity_.recipientName),
+                    root.get(PaymentAnalyticEntity_.recipientAccount),
+                    root.get(PaymentAnalyticEntity_.dvruNumber),
+                    root.get(PaymentAnalyticEntity_.dvruDate),
+                    root.get(PaymentAnalyticEntity_.paymentType)
+            ));
+
+            // Добавим сортировки (Sort -> Orders)
+            sort.forEach(order -> {
+                if (order.isAscending()) {
+                    cq.orderBy(cb.asc(root.get(order.getProperty())));
+                } else {
+                    cq.orderBy(cb.desc(root.get(order.getProperty())));
+                }
+            });
+
+            TypedQuery<PaymentAnalyticDto> query = entityManager.createQuery(cq);
+            query.setHint("jakarta.persistence.loadgraph", entityGraph);
+
+            // Пагинация вручную
+            query.setFirstResult((int) pageable.getOffset());
+            query.setMaxResults(pageable.getPageSize());
+
+            List<PaymentAnalyticDto> content = query.getResultList();
+
+            // Получаем total count
+            CriteriaQuery<Long> countCq = cb.createQuery(Long.class);
+            Root<PaymentAnalyticEntity> countRoot = countCq.from(PaymentAnalyticEntity.class);
+            countCq.select(cb.count(countRoot)).where(builder.toPredicate(countRoot, countCq, cb));
+            Long total = entityManager.createQuery(countCq).getSingleResult();
+
+            resultPage = new org.springframework.data.domain.PageImpl<>(content, pageable, total);
+        } else {
+            // Если граф не нужен, просто вызываем репозиторий
+            resultPage = paymentAnalyticRepository.findAllAsDto(builder, pageable);
+        }
+
+        // Формируем ответ
+        PFLoanFundsRqRegistryResponse response = new PFLoanFundsRqRegistryResponse();
+        response.setTotalElements(resultPage.getTotalElements());
+        response.setContent(resultPage.getContent());
+        // Заполните остальные поля ответа по необходимости
+
+        return response;
+    }
+}
+
+
+
 public <X> GraphConfigurationBuilder<E> withSetSubgraph(SetAttribute<E, X> field, Consumer<GraphConfigurationBuilder<X>> builderConsumer) {
     // Явно приводим к PluralAttribute, чтобы компилятор распознал типы корректно.
     return withPluralSubgraph((PluralAttribute<E, X, ? extends Collection<X>>) field, builderConsumer);
