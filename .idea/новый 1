@@ -1,3 +1,25 @@
+public class GenericSpecificationBuilder<T> {
+    private final List<Specification<T>> specifications = new ArrayList<>();
+
+    public GenericSpecificationBuilder<T> add(Specification<T> spec) {
+        if (spec != null) {
+            specifications.add(spec);
+        }
+        return this;
+    }
+
+    public Specification<T> build() {
+        Specification<T> result = Specification.where(null);
+        for (Specification<T> spec : specifications) {
+            result = result.and(spec);
+        }
+        return result;
+    }
+}
+
+
+
+
 import jakarta.persistence.criteria.*;
 import org.springframework.data.jpa.domain.Specification;
 
