@@ -1,3 +1,158 @@
+### Решение для исправления маппинга с учётом динамических вложенных сущностей
+
+Если структура данных может содержать **вложенные сущности**, и неизвестно заранее, какие именно поля были получены в результате запроса, то подход с использованием **MapStruct** можно усовершенствовать следующим образом:
+
+---
+
+### Основные принципы решения
+1. **Проверка на `null`** перед маппингом вложенных объектов.
+2. Использование **`default` методов** в интерфейсе MapStruct для кастомной логики маппинга.
+3. Реализация вложенного маппинга через отдельные мапперы.
+
+---
+
+### Исправленный маппер
+
+```java
+@Mapper(componentModel = "spring", uses = {PaymentObjectMapper.class, PaymentObjectSsrMapper.class})
+public interface PaymentAnalyticMapper {
+
+    @Mapping(target = "id", source = "id")
+    @Mapping(target = "clientId", source = "clientId")
+    @Mapping(target = "paymentOrderId", source = "paymentDocumentId")
+    @Mapping(target = "number", ignore = true)
+    @Mapping(target = "loanFundsRequestStatus", ignore = true)
+    @Mapping(target = "date", source = "date")
+    @Mapping(target = "fundsType", source = "fundsType")
+    @Mapping(target = "creditAgreementNumber", source = "creditAgreementNumber")
+    @Mapping(target = "creditAgreementDate", source = "creditAgreementDate")
+    @Mapping(target = "payerAccount", source = "payerAccount")
+    @Mapping(target = "obcAccountFlag", source = "obcAccountFlag")
+    @Mapping(target = "trancheIssueDate", source = "trancheIssueDate")
+    @Mapping(target = "amount", source = "amount")
+    @Mapping(target = "paymentPurpose", source = "paymentPurpose")
+    @Mapping(target = "recipientName", source = "recipientName")
+    @Mapping(target = "recipientAccount", source = "recipientAccount")
+    @Mapping(target = "dvruNumber", source = "dvruNumber")
+    @Mapping(target = "dvruDate", source = "dvruDate")
+    @Mapping(target = "paymentType", source = "paymentType")
+    @Mapping(target = "paymentObjects", source = "paymentObjects") // Вложенный маппинг
+    PFLloanFundsRqRegistryItemDto toDto(PaymentAnalyticEntity paymentAnalyticEntity);
+
+    List<PFLloanFundsRqRegistryItemDto> toDtoList(List<PaymentAnalyticEntity> paymentAnalyticEntities);
+}
+```
+
+---
+
+### Вложенный маппер для `PaymentObjectEntity`
+
+```java
+@Mapper(componentModel = "spring", uses = {PaymentObjectSsrMapper.class})
+public interface PaymentObjectMapper {
+
+    @Mapping(target = "name", source = "name")
+    @Mapping(target = "projectName", source = "projectName")
+    @Mapping(target = "paymentObjectSsr", source = "paymentObjectSsr")
+    PaymentObjectDto toDto(PaymentObjectEntity paymentObjectEntity);
+
+    default List<PaymentObjectDto> mapToDtoSet(Set<PaymentObjectEntity> entities) {
+        if (entities == null) {
+            return null;
+        }
+        return entities.stream()
+                       .map(this::toDto)
+                       .collect(Collectors.toList());
+    }
+}
+```
+
+---
+
+### Вложенный маппер для `PaymentObjectSsrEntity`
+
+```java
+@Mapper(componentModel = "spring")
+public interface PaymentObjectSsrMapper {
+
+    @Mapping(target = "paymentSsrArticles", source = "paymentSsrArticles")
+    PaymentObjectSsrDto toDto(PaymentObjectSsrEntity paymentObjectSsrEntity);
+
+    default List<PaymentSsrArticleDto> mapSsrArticles(Set<PaymentSsrArticleEntity> articles) {
+        if (articles == null) {
+            return null;
+        }
+        return articles.stream()
+                       .map(article -> new PaymentSsrArticleDto(article.getCode(), article.getName()))
+                       .collect(Collectors.toList());
+    }
+}
+```
+
+---
+
+### Ключевые детали:
+1. **Методы `default` для работы с коллекциями**:  
+   Например, метод `mapToDtoSet` конвертирует `Set<PaymentObjectEntity>` в `List<PaymentObjectDto>`. Это полезно, если вложенные сущности являются коллекциями.
+
+2. **Рекурсивный маппинг**:  
+   Мапперы `PaymentObjectMapper` и `PaymentObjectSsrMapper` используются для маппинга вложенных сущностей.
+
+3. **Обработка `null`**:  
+   Встроенные проверки `null` в `default` методах помогают избежать ошибок при обработке отсутствующих полей.
+
+4. **`ignore = true` для полей**:  
+   Если определённое поле отсутствует, оно просто игнорируется при маппинге.
+
+---
+
+### Пример выходной DTO-структуры:
+
+```java
+public class PFLloanFundsRqRegistryItemDto {
+    private UUID id;
+    private UUID clientId;
+    private UUID paymentOrderId;
+    private LocalDate date;
+    private BigDecimal amount;
+    private String paymentPurpose;
+    private List<PaymentObjectDto> paymentObjects;
+    // Другие поля...
+}
+
+public class PaymentObjectDto {
+    private String name;
+    private String projectName;
+    private PaymentObjectSsrDto paymentObjectSsr;
+}
+
+public class PaymentObjectSsrDto {
+    private List<PaymentSsrArticleDto> paymentSsrArticles;
+}
+
+public class PaymentSsrArticleDto {
+    private String code;
+    private String name;
+
+    public PaymentSsrArticleDto(String code, String name) {
+        this.code = code;
+        this.name = name;
+    }
+}
+```
+
+---
+
+### Итог
+
+1. Использование **отдельных мапперов** для вложенных сущностей упрощает код.
+2. Проверка на `null` помогает корректно обрабатывать отсутствующие поля.
+3. Маппинг коллекций (`Set` и `List`) реализован через **`default` методы**.
+
+Такое решение полностью **адаптивно** к динамически получаемым данным и позволяет избежать ошибок при маппинге вложенных сущностей.
+
+
+
 Чтобы использовать **возможности метасущности** в аннотации `@Mapping` с MapStruct, можно обратиться к статическим полям метасущностей напрямую. Это обеспечивает типобезопасность и минимизирует ошибки при изменении полей сущностей.
 
 ---
