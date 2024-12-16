@@ -1,3 +1,81 @@
+class DynamicEntityGraphBuilder<T> {
+
+    private final EntityGraph<T> graph;
+    private final Set<String> addedAttributes = new HashSet<>();
+    private final Set<String> addedSubgraphs = new HashSet<>();
+
+    public DynamicEntityGraphBuilder(EntityManager entityManager, Class<T> rootEntity) {
+        this.graph = entityManager.createEntityGraph(rootEntity);
+    }
+
+    public DynamicEntityGraphBuilder<T> addGraphConfiguration(GraphConfiguration<T> configuration) {
+        // Добавляем атрибуты
+        if (configuration.getAttributes() != null) {
+            for (SingularAttribute<? super T, ?> attribute : configuration.getAttributes()) {
+                if (addedAttributes.add(attribute.getName())) {
+                    graph.addAttributeNodes(attribute.getName());
+                }
+            }
+        }
+
+        // Добавляем сабграфы
+        if (configuration.getSubgraphs() != null) {
+            for (SubgraphDescriptor<?> subgraphDescriptor : configuration.getSubgraphs()) {
+                // Передаем graph (EntityGraph<T>) и subgraphDescriptor
+                addSubgraph(graph, subgraphDescriptor);
+            }
+        }
+
+        return this;
+    }
+
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private <X> void addSubgraph(Object parentGraph, SubgraphDescriptor<X> descriptor) {
+        // Определяем имя поля по SingularAttribute или CollectionAttribute
+        final String fieldName = (descriptor.getField() instanceof SingularAttribute)
+                ? ((SingularAttribute) descriptor.getField()).getName()
+                : ((CollectionAttribute) descriptor.getField()).getName();
+
+        String subgraphKey = parentGraph.getClass().getSimpleName() + ":" + fieldName;
+        if (!addedSubgraphs.add(subgraphKey)) {
+            return; // Сабграф уже добавлен
+        }
+
+        // Создаем subgraph в зависимости от типа parentGraph
+        Subgraph<X> subgraph;
+        if (parentGraph instanceof EntityGraph) {
+            // parentGraph - это корневой граф
+            EntityGraph<?> entityGraph = (EntityGraph<?>) parentGraph;
+            subgraph = (Subgraph<X>) entityGraph.addSubgraph(fieldName);
+        } else if (parentGraph instanceof Subgraph) {
+            // parentGraph - это вложенный субграф
+            Subgraph<?> parent = (Subgraph<?>) parentGraph;
+            subgraph = (Subgraph<X>) parent.addSubgraph(fieldName);
+        } else {
+            throw new IllegalStateException("Unknown graph type: " + parentGraph.getClass());
+        }
+
+        // Добавляем атрибуты в текущий сабграф
+        if (descriptor.getAttributes() != null) {
+            for (SingularAttribute<? super X, ?> attribute : descriptor.getAttributes()) {
+                subgraph.addAttributeNodes(attribute.getName());
+            }
+        }
+
+        // Рекурсивно добавляем вложенные сабграфы
+        if (descriptor.getSubgraphs() != null) {
+            for (SubgraphDescriptor<?> nestedDescriptor : descriptor.getSubgraphs()) {
+                addSubgraph(subgraph, nestedDescriptor);
+            }
+        }
+    }
+
+    public EntityGraph<T> build() {
+        return graph;
+    }
+}
+
+
 Ниже приведен доработанный вариант кода, который использует дженерики и ковариантность таким образом, чтобы избежать явных приведения типов (кастов). Основная идея:
 
 1. **Использовать `? super E` для атрибутов**:  
