@@ -1,3 +1,61 @@
+public interface SortingService {
+    Sort getSort(List<SortingRequestDto> sortingDtos);
+}
+
+import org.springframework.data.domain.Sort;
+import java.util.ArrayList;
+import java.util.List;
+
+@Service
+public class SortingServiceImpl implements SortingService {
+
+    @Override
+    public Sort getSort(List<SortingRequestDto> sortingDtos) {
+        List<Sort.Order> orders = new ArrayList<>();
+        
+        if (sortingDtos != null && !sortingDtos.isEmpty()) {
+            for (SortingRequestDto dto : sortingDtos) {
+                // Направление сортировки
+                Sort.Direction direction = dto.getSortDescending() ? Sort.Direction.DESC : Sort.Direction.ASC;
+
+                // Сопоставляем поля для сортировки
+                switch (dto.getSortField().toUpperCase()) {
+                    case "NUMBER" -> orders.add(new Sort.Order(direction, "number"));
+                    case "LOAN_FUNDS_REQUEST_STATUS" -> orders.add(new Sort.Order(direction, "status"));
+                    case "DATE" -> orders.add(new Sort.Order(direction, "date"));
+                    case "FUNDS_TYPE" -> orders.add(new Sort.Order(direction, "fundsType"));
+                    case "CREDIT_AGREEMENT" -> {
+                        orders.add(new Sort.Order(direction, "creditAgreementNumber"));
+                        orders.add(new Sort.Order(direction, "creditAgreementDate"));
+                    }
+                    case "PAYER_ACCOUNT" -> {
+                        orders.add(new Sort.Order(direction, "payerAccount"));
+                        orders.add(new Sort.Order(direction, "obcAccountFlag"));
+                    }
+                    case "TRANCHE_ISSUE_DATE" -> orders.add(new Sort.Order(direction, "trancheIssueDate"));
+                    case "AMOUNT" -> orders.add(new Sort.Order(direction, "amount"));
+                    case "PAYMENT_PURPOSE" -> orders.add(new Sort.Order(direction, "paymentPurpose"));
+                    case "RECIPIENT_NAME" -> orders.add(new Sort.Order(direction, "recipientName"));
+                    case "RECIPIENT_ACCOUNT" -> orders.add(new Sort.Order(direction, "recipientAccount"));
+                    case "DVRU" -> {
+                        orders.add(new Sort.Order(direction, "dvruNumber"));
+                        orders.add(new Sort.Order(direction, "dvruDate"));
+                    }
+                    case "PAYMENT_TYPE" -> orders.add(new Sort.Order(direction, "paymentType"));
+                    default -> orders.add(new Sort.Order(direction, "clientId")); // Поле по умолчанию
+                }
+            }
+        } else {
+            // Сортировка по умолчанию, если DTO пуст
+            orders.add(Sort.Order.desc("clientId"));
+        }
+
+        return Sort.by(orders);
+    }
+}
+
+
+
 public class GenericSpecificationBuilder<T> {
     private final List<Specification<T>> specifications = new ArrayList<>();
 
