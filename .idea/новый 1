@@ -1,3 +1,357 @@
+Ниже представлен скорректированный вариант подхода, учитывая проблему с типами атрибутов в сабграфах, а также различия между одиночными и коллекционными ассоциациями. Основная идея:  
+- В `GraphConfigurationBuilder` добавить отдельные методы для сабграфов по одиночным (`SingularAttribute`) и коллекционным (`CollectionAttribute`) связям.  
+- Убедиться, что метамодельные атрибуты (`_paymentObjects`, `_code`, `_name`, `_projectName`) соответствуют типам сущностей, в которых они определены.  
+- Если `PaymentAnalyticEntity._paymentObjects` — это коллекция (например, `ListAttribute<PaymentAnalyticEntity, PaymentObjectEntity>`), то используем метод `withCollectionSubgraph(...)`, чтобы DSL корректно собрал конфигурацию для сабграфа коллекции.
+
+**Основные изменения:**
+1. Добавлен метод `withCollectionSubgraph` в билдер.  
+2. Типы `withSubgraph` теперь чётко различают singular и collection атрибуты.  
+3. В примере регистрации `RegistryCodes.PAYMENT_OBJECT` и `RegistryCodes.SSR_ARTICLE` используем `withCollectionSubgraph`, если `PaymentAnalyticEntity._paymentObjects` — это коллекция.
+4. Проверить, что в вашем JPA метамоделе `PaymentObjectEntity._name` и `PaymentObjectEntity._projectName` являются `SingularAttribute<PaymentObjectEntity, String>`, а `PaymentSsrArticleEntity._code` — это `SingularAttribute<PaymentSsrArticleEntity, String>`.
+
+```java
+import jakarta.persistence.EntityGraph;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.Subgraph;
+import jakarta.persistence.metamodel.CollectionAttribute;
+import jakarta.persistence.metamodel.SingularAttribute;
+import java.util.*;
+import java.util.function.Consumer;
+
+enum RegistryCodes {
+    DEFAULT,
+    NUMBER,
+    LOAN_FUNDS_REQUEST_STATUS,
+    DATE,
+    FUNDS_TYPE,
+    CREDIT_AGREEMENT,
+    PAYER_ACCOUNT,
+    TRANCHE_ISSUE_DATE,
+    AMOUNT,
+    PAYMENT_PURPOSE,
+    RECIPIENT_ACCOUNT,
+    DVRU,
+    PAYMENT_OBJECT,
+    SSR_ARTICLE
+}
+
+interface GraphConfiguration<T> {
+
+    Class<T> getEntityClass();
+    List<SingularAttribute<?, ?>> getAttributes();
+    List<SubgraphDescriptor<?>> getSubgraphs();
+
+    GraphConfiguration<T> merge(GraphConfiguration<T> other);
+
+    static <E> GraphConfigurationBuilder<E> forEntity(Class<E> entityClass) {
+        return new GraphConfigurationBuilder<>(entityClass);
+    }
+
+    class GraphConfigurationBuilder<E> implements GraphConfiguration<E> {
+        private final Class<E> entityClass;
+        private final List<SingularAttribute<?, ?>> attributes = new ArrayList<>();
+        private final List<SubgraphDescriptor<?>> subgraphs = new ArrayList<>();
+
+        public GraphConfigurationBuilder(Class<E> entityClass) {
+            this.entityClass = entityClass;
+        }
+
+        @Override
+        public Class<E> getEntityClass() {
+            return entityClass;
+        }
+
+        @Override
+        public List<SingularAttribute<?, ?>> getAttributes() {
+            return attributes;
+        }
+
+        @Override
+        public List<SubgraphDescriptor<?>> getSubgraphs() {
+            return subgraphs.isEmpty() ? null : subgraphs;
+        }
+
+        @Override
+        public GraphConfiguration<E> merge(GraphConfiguration<E> other) {
+            if (!other.getEntityClass().equals(this.entityClass)) {
+                throw new IllegalArgumentException("Невозможно объединить конфигурации для разных сущностей");
+            }
+            // Добавляем атрибуты
+            for (SingularAttribute<?, ?> attr : other.getAttributes()) {
+                if (!this.attributes.contains(attr)) {
+                    this.attributes.add(attr);
+                }
+            }
+            // Добавляем сабграфы
+            mergeSubgraphs(this.subgraphs, other.getSubgraphs());
+            return this;
+        }
+
+        private void mergeSubgraphs(List<SubgraphDescriptor<?>> target, List<SubgraphDescriptor<?>> source) {
+            if (source == null) return;
+
+            for (SubgraphDescriptor<?> sd : source) {
+                Optional<SubgraphDescriptor<?>> existing = target.stream()
+                    .filter(t -> t.getField().equals(sd.getField()))
+                    .findFirst();
+                if (existing.isPresent()) {
+                    existing.get().merge(sd);
+                } else {
+                    target.add(sd);
+                }
+            }
+        }
+
+        @SafeVarargs
+        public final GraphConfigurationBuilder<E> withAttributes(SingularAttribute<? super E, ?>... attrs) {
+            for (SingularAttribute<? super E, ?> attr : attrs) {
+                if (!attributes.contains(attr)) {
+                    attributes.add(attr);
+                }
+            }
+            return this;
+        }
+
+        /**
+         * Сабграф для одиночного атрибута (ManyToOne, OneToOne).
+         */
+        public <X> GraphConfigurationBuilder<E> withSubgraph(SingularAttribute<? super E, X> field, Consumer<GraphConfigurationBuilder<X>> builderConsumer) {
+            GraphConfigurationBuilder<X> subBuilder = new GraphConfigurationBuilder<>(field.getBindableJavaType());
+            builderConsumer.accept(subBuilder);
+            SubgraphDescriptor<X> descriptor = new SubgraphDescriptor<>(field, subBuilder.getAttributes(), subBuilder.getSubgraphs());
+            subgraphs.add(descriptor);
+            return this;
+        }
+
+        /**
+         * Сабграф для коллекционного атрибута (OneToMany, ManyToMany, etc.).
+         */
+        public <X> GraphConfigurationBuilder<E> withCollectionSubgraph(CollectionAttribute<? super E, X> field, Consumer<GraphConfigurationBuilder<X>> builderConsumer) {
+            GraphConfigurationBuilder<X> subBuilder = new GraphConfigurationBuilder<>(field.getElementType().getJavaType());
+            builderConsumer.accept(subBuilder);
+            SubgraphDescriptor<X> descriptor = new SubgraphDescriptor<>(field, subBuilder.getAttributes(), subBuilder.getSubgraphs());
+            subgraphs.add(descriptor);
+            return this;
+        }
+    }
+}
+
+class SubgraphDescriptor<T> {
+    private final Object field; // может быть SingularAttribute или CollectionAttribute
+    private final List<SingularAttribute<T, ?>> attributes;
+    private final List<SubgraphDescriptor<?>> subgraphs;
+
+    public SubgraphDescriptor(Object field,
+                              List<SingularAttribute<T, ?>> attributes,
+                              List<SubgraphDescriptor<?>> subgraphs) {
+        this.field = field;
+        this.attributes = attributes == null ? new ArrayList<>() : new ArrayList<>(attributes);
+        this.subgraphs = subgraphs == null ? new ArrayList<>() : new ArrayList<>(subgraphs);
+    }
+
+    public Object getField() {
+        return field;
+    }
+
+    public List<SingularAttribute<T, ?>> getAttributes() {
+        return attributes;
+    }
+
+    public List<SubgraphDescriptor<?>> getSubgraphs() {
+        return subgraphs.isEmpty() ? null : subgraphs;
+    }
+
+    @SuppressWarnings("unchecked")
+    public void merge(SubgraphDescriptor<?> other) {
+        for (SingularAttribute<?, ?> attr : other.attributes) {
+            if (!this.attributes.contains(attr)) {
+                this.attributes.add((SingularAttribute<T, ?>) attr);
+            }
+        }
+
+        if (other.subgraphs != null) {
+            for (SubgraphDescriptor<?> nested : other.subgraphs) {
+                Optional<SubgraphDescriptor<?>> existing = this.subgraphs.stream()
+                    .filter(sg -> sg.getField().equals(nested.getField()))
+                    .findFirst();
+                if (existing.isPresent()) {
+                    existing.get().merge(nested);
+                } else {
+                    this.subgraphs.add(nested);
+                }
+            }
+        }
+    }
+}
+
+class DynamicEntityGraphBuilder<T> {
+
+    private final EntityGraph<T> graph;
+    private final Set<String> addedAttributes = new HashSet<>();
+    private final Set<String> addedSubgraphs = new HashSet<>();
+
+    public DynamicEntityGraphBuilder(EntityManager entityManager, Class<T> rootEntity) {
+        this.graph = entityManager.createEntityGraph(rootEntity);
+    }
+
+    public DynamicEntityGraphBuilder<T> addGraphConfiguration(GraphConfiguration<T> configuration) {
+        // Добавляем атрибуты
+        if (configuration.getAttributes() != null) {
+            for (SingularAttribute<?, ?> attribute : configuration.getAttributes()) {
+                if (addedAttributes.add(attribute.getName())) {
+                    graph.addAttributeNodes(attribute.getName());
+                }
+            }
+        }
+        // Добавляем сабграфы
+        if (configuration.getSubgraphs() != null) {
+            for (SubgraphDescriptor<?> subgraphDescriptor : configuration.getSubgraphs()) {
+                addSubgraph(graph, subgraphDescriptor);
+            }
+        }
+
+        return this;
+    }
+
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private <X> void addSubgraph(Subgraph<X> parentGraph, SubgraphDescriptor<X> descriptor) {
+        String fieldName;
+        if (descriptor.getField() instanceof SingularAttribute) {
+            fieldName = ((SingularAttribute) descriptor.getField()).getName();
+        } else if (descriptor.getField() instanceof CollectionAttribute) {
+            fieldName = ((CollectionAttribute) descriptor.getField()).getName();
+        } else {
+            throw new IllegalStateException("Unsupported attribute type for subgraph");
+        }
+
+        String subgraphKey = parentGraph.getClass().getSimpleName() + ":" + fieldName;
+        if (!addedSubgraphs.add(subgraphKey)) {
+            return;
+        }
+
+        Subgraph<X> subgraph = parentGraph.addSubgraph(fieldName);
+        if (descriptor.getAttributes() != null) {
+            for (SingularAttribute<X, ?> attribute : descriptor.getAttributes()) {
+                subgraph.addAttributeNodes(attribute.getName());
+            }
+        }
+
+        if (descriptor.getSubgraphs() != null) {
+            for (SubgraphDescriptor<?> nestedDescriptor : descriptor.getSubgraphs()) {
+                addSubgraph(subgraph, nestedDescriptor);
+            }
+        }
+    }
+
+    public EntityGraph<T> build() {
+        return graph;
+    }
+}
+
+// Предположим, что у нас есть такие метамодельные поля:
+// PaymentAnalyticEntity._paymentObjects - CollectionAttribute<PaymentAnalyticEntity, PaymentObjectEntity>
+// PaymentObjectEntity._name, PaymentObjectEntity._projectName - SingularAttribute<PaymentObjectEntity, String>
+// PaymentObjectEntity._paymentObjectSsr - SingularAttribute<PaymentObjectEntity, PaymentObjectSsrEntity>
+// PaymentObjectSsrEntity._paymentSsrArticles - CollectionAttribute<PaymentObjectSsrEntity, PaymentSsrArticleEntity>
+// PaymentSsrArticleEntity._code - SingularAttribute<PaymentSsrArticleEntity, String>
+
+
+class PFLloanFundsRqRegistryGraphConfigurationRegistry {
+    private final Map<RegistryCodes, GraphConfiguration<?>> configurations = new HashMap<>();
+
+    public PFLloanFundsRqRegistryGraphConfigurationRegistry() {
+        configurations.put(RegistryCodes.DEFAULT, GraphConfiguration.forEntity(PaymentAnalyticEntity.class)
+                .withAttributes(PaymentAnalyticEntity._id, PaymentAnalyticEntity._clientId, PaymentAnalyticEntity._paymentDocumentId));
+
+        configurations.put(RegistryCodes.NUMBER, GraphConfiguration.forEntity(PaymentAnalyticEntity.class)
+                .withAttributes(PaymentAnalyticEntity._number));
+
+        configurations.put(RegistryCodes.LOAN_FUNDS_REQUEST_STATUS, GraphConfiguration.forEntity(PaymentAnalyticEntity.class)
+                .withAttributes(PaymentAnalyticEntity._status));
+
+        configurations.put(RegistryCodes.DATE, GraphConfiguration.forEntity(PaymentAnalyticEntity.class)
+                .withAttributes(PaymentAnalyticEntity._date));
+
+        configurations.put(RegistryCodes.FUNDS_TYPE, GraphConfiguration.forEntity(PaymentAnalyticEntity.class)
+                .withAttributes(PaymentAnalyticEntity._fundsType));
+
+        configurations.put(RegistryCodes.CREDIT_AGREEMENT, GraphConfiguration.forEntity(PaymentAnalyticEntity.class)
+                .withAttributes(PaymentAnalyticEntity._creditAgreementNumber, PaymentAnalyticEntity._creditAgreementDate));
+
+        configurations.put(RegistryCodes.PAYER_ACCOUNT, GraphConfiguration.forEntity(PaymentAnalyticEntity.class)
+                .withAttributes(PaymentAnalyticEntity._payerAccount, PaymentAnalyticEntity._obcAccountFlag));
+
+        configurations.put(RegistryCodes.TRANCHE_ISSUE_DATE, GraphConfiguration.forEntity(PaymentAnalyticEntity.class)
+                .withAttributes(PaymentAnalyticEntity._trancheIssueDate));
+
+        configurations.put(RegistryCodes.AMOUNT, GraphConfiguration.forEntity(PaymentAnalyticEntity.class)
+                .withAttributes(PaymentAnalyticEntity._amount));
+
+        configurations.put(RegistryCodes.PAYMENT_PURPOSE, GraphConfiguration.forEntity(PaymentAnalyticEntity.class)
+                .withAttributes(PaymentAnalyticEntity._paymentPurpose));
+
+        configurations.put(RegistryCodes.RECIPIENT_ACCOUNT, GraphConfiguration.forEntity(PaymentAnalyticEntity.class)
+                .withAttributes(PaymentAnalyticEntity._recipientAccount));
+
+        configurations.put(RegistryCodes.DVRU, GraphConfiguration.forEntity(PaymentAnalyticEntity.class)
+                .withAttributes(PaymentAnalyticEntity._dvruNumber, PaymentAnalyticEntity._dvruDate));
+
+        // Предположим, что PaymentAnalyticEntity._paymentObjects - это CollectionAttribute
+        configurations.put(RegistryCodes.PAYMENT_OBJECT, GraphConfiguration.forEntity(PaymentAnalyticEntity.class)
+                .withCollectionSubgraph(PaymentAnalyticEntity._paymentObjects, subGraph -> subGraph
+                        .withAttributes(PaymentObjectEntity._name, PaymentObjectEntity._projectName)
+                ));
+
+        configurations.put(RegistryCodes.SSR_ARTICLE, GraphConfiguration.forEntity(PaymentAnalyticEntity.class)
+                .withCollectionSubgraph(PaymentAnalyticEntity._paymentObjects, subGraph -> subGraph
+                        .withAttributes(PaymentObjectEntity._name, PaymentObjectEntity._projectName)
+                        .withSubgraph(PaymentObjectEntity._paymentObjectSsr, objectSubGraph -> objectSubGraph
+                                .withCollectionSubgraph(PaymentObjectSsrEntity._paymentSsrArticles, paymentSsrArticlesSubGraph ->
+                                        paymentSsrArticlesSubGraph.withAttributes(PaymentSsrArticleEntity._code)
+                                )
+                        )
+                ));
+    }
+
+    public boolean contains(RegistryCodes code) {
+        return configurations.containsKey(code);
+    }
+
+    @SuppressWarnings("unchecked")
+    public <T> GraphConfiguration<T> get(RegistryCodes code) {
+        return (GraphConfiguration<T>) configurations.get(code);
+    }
+}
+
+// Пример использования
+class ExampleUsage {
+    void example(EntityManager entityManager, List<RegistryCodes> requestCodes) {
+        GraphConfiguration<PaymentAnalyticEntity> finalConfig = GraphConfiguration.forEntity(PaymentAnalyticEntity.class);
+        PFLloanFundsRqRegistryGraphConfigurationRegistry registry = new PFLloanFundsRqRegistryGraphConfigurationRegistry();
+
+        for (RegistryCodes code : requestCodes) {
+            if (registry.contains(code)) {
+                finalConfig.merge(registry.get(code));
+            }
+        }
+
+        DynamicEntityGraphBuilder<PaymentAnalyticEntity> builder = new DynamicEntityGraphBuilder<>(entityManager, PaymentAnalyticEntity.class);
+        builder.addGraphConfiguration(finalConfig);
+        EntityGraph<PaymentAnalyticEntity> combinedGraph = builder.build();
+
+        // Далее использовать combinedGraph в запросе
+    }
+}
+```
+
+**Ключевые моменты:**  
+- Для коллекционных атрибутов мы используем `withCollectionSubgraph(...)`.  
+- Для одиночных атрибутов (OneToOne, ManyToOne) используем `withSubgraph(...)`.  
+- Метамодельные классы должны быть корректно сгенерированы.  
+- Таким образом достигается корректная типизация и возможность добавить вложенные сабграфы без ошибок компиляции.
+
+
+
 Ниже приведен пример переработанного решения с использованием более удобного DSL-подхода для построения конфигураций графов и проверки списка кодов.
 
 Основные изменения:
