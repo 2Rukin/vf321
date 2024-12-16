@@ -1,4 +1,32 @@
 public <X> GraphConfigurationBuilder<E> withSetSubgraph(SetAttribute<E, X> field, Consumer<GraphConfigurationBuilder<X>> builderConsumer) {
+    // Явно приводим к PluralAttribute, чтобы компилятор распознал типы корректно.
+    return withPluralSubgraph((PluralAttribute<E, X, ? extends Collection<X>>) field, builderConsumer);
+}
+
+public <X> GraphConfigurationBuilder<E> withListSubgraph(ListAttribute<E, X> field, Consumer<GraphConfigurationBuilder<X>> builderConsumer) {
+    // Аналогично для ListAttribute
+    return withPluralSubgraph((PluralAttribute<E, X, ? extends Collection<X>>) field, builderConsumer);
+}
+
+/**
+ * Общий метод для обработки PluralAttribute (SetAttribute, ListAttribute)
+ */
+private <X, C extends Collection<X>> GraphConfigurationBuilder<E> withPluralSubgraph(
+    PluralAttribute<E, X, C> field,
+    Consumer<GraphConfigurationBuilder<X>> builderConsumer
+) {
+    @SuppressWarnings("unchecked")
+    Class<X> elementClass = (Class<X>) field.getElementType().getJavaType();
+    GraphConfigurationBuilder<X> subBuilder = new GraphConfigurationBuilder<>(elementClass);
+    builderConsumer.accept(subBuilder);
+    SubgraphDescriptor<X> descriptor = new SubgraphDescriptor<>(field, subBuilder.getAttributes(), subBuilder.getSubgraphs());
+    subgraphs.add(descriptor);
+    return this;
+}
+
+
+
+public <X> GraphConfigurationBuilder<E> withSetSubgraph(SetAttribute<E, X> field, Consumer<GraphConfigurationBuilder<X>> builderConsumer) {
     return withPluralSubgraph(field, builderConsumer);
 }
 
