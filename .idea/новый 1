@@ -1,3 +1,244 @@
+Если вы хотите использовать `EntityGraph` для подгрузки связанной структуры, а затем получить DTO, то более логичным подходом будет:
+
+1. Сначала загрузить данные как сущности (`PaymentAnalyticEntity`), применяя `EntityGraph` для подгрузки нужных связей.
+2. Затем, после получения списка сущностей, вручную (или с помощью маппера, вроде MapStruct) сконвертировать каждую сущность в `PaymentAnalyticDto`.
+
+Таким образом вы сможете полноценно использовать возможности `EntityGraph` для управления графом загрузки сущностей, а потом уже "на уровне сервисного слоя" собрать DTO из загруженных сущностей.
+
+Ниже приведён пример кода для этого подхода.
+
+### Репозиторий
+
+В репозитории мы откажемся от `cb.construct()` и будем возвращать сущности. Для этого можно использовать стандартный метод `findAll(Specification spec, Pageable pageable)` (если он у вас есть) или, если нужно, кастомный метод, который применит `EntityGraph`:
+
+```java
+public interface PaymentAnalyticRepository extends JpaRepository<PaymentAnalyticEntity, UUID>, JpaSpecificationExecutor<PaymentAnalyticEntity> {
+}
+```
+
+Допустим, мы хотим использовать кастомный метод с графом. Тогда можно сделать так же, как и ранее, через кастомный репозиторий, только теперь без `cb.construct()`:
+
+```java
+public interface PaymentAnalyticCustomRepository {
+    Page<PaymentAnalyticEntity> findAllWithGraphAsEntity(Specification<PaymentAnalyticEntity> spec,
+                                                         Pageable pageable,
+                                                         EntityGraph<PaymentAnalyticEntity> entityGraph);
+}
+```
+
+Реализация:
+
+```java
+public class PaymentAnalyticCustomRepositoryImpl implements PaymentAnalyticCustomRepository {
+
+    @PersistenceContext
+    private EntityManager em;
+
+    @Override
+    public Page<PaymentAnalyticEntity> findAllWithGraphAsEntity(Specification<PaymentAnalyticEntity> spec,
+                                                                Pageable pageable,
+                                                                EntityGraph<PaymentAnalyticEntity> entityGraph) {
+        CriteriaBuilder cb = em.getCriteriaBuilder();
+        CriteriaQuery<PaymentAnalyticEntity> cq = cb.createQuery(PaymentAnalyticEntity.class);
+        Root<PaymentAnalyticEntity> root = cq.from(PaymentAnalyticEntity.class);
+
+        Predicate predicate = spec != null ? spec.toPredicate(root, cq, cb) : cb.conjunction();
+        cq.where(predicate);
+
+        // Применим сортировку из pageable
+        if (pageable.getSort().isSorted()) {
+            List<Order> orders = pageable.getSort().stream()
+                    .map(order -> order.isAscending() ? cb.asc(root.get(order.getProperty()))
+                            : cb.desc(root.get(order.getProperty())))
+                    .toList();
+            cq.orderBy(orders);
+        }
+
+        TypedQuery<PaymentAnalyticEntity> query = em.createQuery(cq);
+        query.setHint("jakarta.persistence.loadgraph", entityGraph);
+
+        query.setFirstResult((int) pageable.getOffset());
+        query.setMaxResults(pageable.getPageSize());
+        List<PaymentAnalyticEntity> content = query.getResultList();
+
+        // Count query
+        CriteriaQuery<Long> countCq = cb.createQuery(Long.class);
+        Root<PaymentAnalyticEntity> countRoot = countCq.from(PaymentAnalyticEntity.class);
+        countCq.select(cb.count(countRoot)).where(spec != null ? spec.toPredicate(countRoot, countCq, cb) : cb.conjunction());
+        Long total = em.createQuery(countCq).getSingleResult();
+
+        return new PageImpl<>(content, pageable, total);
+    }
+}
+```
+
+### Сервис
+
+В сервисе мы теперь получаем сущности, а затем мапим их в DTO. Предположим, что у вас есть статический метод или отдельный сервис для маппинга `PaymentAnalyticEntity` в `PaymentAnalyticDto`. Используем Lombok Builder для сборки DTO:
+
+```java
+@Service
+public class PaymentAnalyticService {
+    private final PaymentAnalyticRepository paymentAnalyticRepository;
+    private final SortingService sortingService;
+
+    @PersistenceContext
+    private EntityManager entityManager;
+
+    public PaymentAnalyticService(PaymentAnalyticRepository paymentAnalyticRepository,
+                                  SortingService sortingService) {
+        this.paymentAnalyticRepository = paymentAnalyticRepository;
+        this.sortingService = sortingService;
+    }
+
+    @Transactional(readOnly = true)
+    public PFLoanFundsRqRegistryResponse getFilteredSortingPageByRegistryCodes(Set<UUID> orgIds,
+                                                                               PaginationRequestDto pagination,
+                                                                               List<SortingRequestDto> sortingDtos,
+                                                                               PFLoanFundsRqRegistryFilterDto requestFilter,
+                                                                               List<RegistryCodes> fields) {
+
+        // Создаём спецификации
+        Specification<PaymentAnalyticEntity> orgIdsSpecification = (root, query, cb) ->
+                (orgIds != null && !orgIds.isEmpty())
+                        ? root.get(PaymentAnalyticEntity_.clientId).in(orgIds)
+                        : cb.conjunction();
+
+        Specification<PaymentAnalyticEntity> analyticSpec = new PFLoanFundsRqRegistryPaymentAnalyticFilterSpecification(requestFilter);
+        Specification<PaymentAnalyticEntity> objectSpec = new PFLoanFundsRqRegistryPaymentObjectFilterSpecification(requestFilter);
+        Specification<PaymentAnalyticEntity> ssrSpec = new PFLoanFundsRqRegistryPaymentSsrArticleFilterSpecification(requestFilter);
+
+        Specification<PaymentAnalyticEntity> spec = new GenericSpecificationBuilder<PaymentAnalyticEntity>()
+                .add(orgIdsSpecification)
+                .add(analyticSpec)
+                .add(objectSpec)
+                .add(ssrSpec)
+                .build();
+
+        Sort sort = sortingService.getSort(sortingDtos);
+        Pageable pageable = PageRequest.of(
+                pagination != null ? pagination.getPageNumber() : 0,
+                pagination != null ? pagination.getPageSize() : 10,
+                sort
+        );
+
+        boolean needPaymentObject = fields.contains(RegistryCodes.PAYMENT_OBJECT);
+        boolean needSsrArticle = fields.contains(RegistryCodes.SSR_ARTICLE);
+
+        Page<PaymentAnalyticEntity> entityPage;
+
+        if (needPaymentObject || needSsrArticle) {
+            // Построим EntityGraph для сущности
+            DynamicEntityGraphBuilder<PaymentAnalyticEntity> graphBuilder =
+                    new DynamicEntityGraphBuilder<>(entityManager, PaymentAnalyticEntity.class);
+            
+            // Добавим базовую конфигурацию графа (например, только root поля)
+            graphBuilder.addGraphConfiguration(get(RegistryCodes.DEFAULT));
+
+            if (needPaymentObject) {
+                graphBuilder.addGraphConfiguration(get(RegistryCodes.PAYMENT_OBJECT));
+            }
+            if (needSsrArticle) {
+                graphBuilder.addGraphConfiguration(get(RegistryCodes.SSR_ARTICLE));
+            }
+
+            EntityGraph<PaymentAnalyticEntity> entityGraph = graphBuilder.build();
+
+            entityPage = ((PaymentAnalyticCustomRepository)paymentAnalyticRepository)
+                    .findAllWithGraphAsEntity(spec, pageable, entityGraph);
+
+        } else {
+            // Без графа можно использовать стандартный метод findAll c спецификацией:
+            entityPage = paymentAnalyticRepository.findAll(spec, pageable);
+        }
+
+        // Теперь мапим сущности в DTO
+        List<PaymentAnalyticDto> dtoList = entityPage.stream()
+                .map(this::mapToDto)
+                .toList();
+
+        PFLoanFundsRqRegistryResponse response = new PFLoanFundsRqRegistryResponse();
+        response.setTotalElements(entityPage.getTotalElements());
+        response.setContent(dtoList);
+
+        return response;
+    }
+
+    // Метод маппинга сущности в DTO
+    private PaymentAnalyticDto mapToDto(PaymentAnalyticEntity entity) {
+        // Строим DTO с помощью Lombok builder
+        // Если PaymentObjectEntity и т.д. подгружены, их тоже мапим
+        return PaymentAnalyticDto.builder()
+                .id(entity.getId())
+                .clientId(entity.getClientId())
+                .paymentDocumentId(entity.getPaymentDocumentId())
+                .number(entity.getNumber())
+                .status(entity.getStatus())
+                .date(entity.getDate())
+                .fundsType(entity.getFundsType())
+                .creditAgreementNumber(entity.getCreditAgreementNumber())
+                .creditAgreementDate(entity.getCreditAgreementDate())
+                .payerAccount(entity.getPayerAccount())
+                .obcAccountFlag(entity.getObcAccountFlag())
+                .trancheIssueDate(entity.getTrancheIssueDate())
+                .amount(entity.getAmount())
+                .paymentPurpose(entity.getPaymentPurpose())
+                .recipientName(entity.getRecipientName())
+                .recipientAccount(entity.getRecipientAccount())
+                .dvruNumber(entity.getDvruNumber())
+                .dvruDate(entity.getDvruDate())
+                .paymentType(entity.getPaymentType())
+                .paymentObjects(mapPaymentObjects(entity.getPaymentObjects()))
+                .build();
+    }
+
+    private Set<PaymentAnalyticDto.PaymentObjectEntityDto> mapPaymentObjects(Set<PaymentObjectEntity> objects) {
+        if (objects == null) return null;
+        return objects.stream().map(o -> PaymentAnalyticDto.PaymentObjectEntityDto.builder()
+                .name(o.getName())
+                .projectName(o.getProjectName())
+                .paymentObjectSsr(mapPaymentObjectSsr(o.getPaymentObjectSsr()))
+                .build()
+        ).collect(Collectors.toSet());
+    }
+
+    private PaymentAnalyticDto.PaymentObjectSsrEntityDto mapPaymentObjectSsr(PaymentObjectSsrEntity ssr) {
+        if (ssr == null) return null;
+        return PaymentAnalyticDto.PaymentObjectSsrEntityDto.builder()
+                .paymentSsrArticles(mapPaymentSsrArticles(ssr.getPaymentSsrArticles()))
+                .build();
+    }
+
+    private Set<PaymentAnalyticDto.PaymentSsrArticleDto> mapPaymentSsrArticles(Set<PaymentSsrArticleEntity> articles) {
+        if (articles == null) return null;
+        return articles.stream().map(a -> PaymentAnalyticDto.PaymentSsrArticleDto.builder()
+                .code(a.getCode())
+                .build()
+        ).collect(Collectors.toSet());
+    }
+
+    private GraphConfiguration<PaymentAnalyticEntity> get(RegistryCodes code) {
+        // Возвращаем конфигурацию графа
+        // Примерно так:
+        return switch (code) {
+            case DEFAULT -> new GraphConfiguration<>(Set.of()); 
+            case PAYMENT_OBJECT -> new GraphConfiguration<>(Set.of("paymentObjects", "paymentObjects.paymentObjectSsr"));
+            case SSR_ARTICLE -> new GraphConfiguration<>(Set.of("paymentObjects.paymentObjectSsr.paymentSsrArticles"));
+            default -> new GraphConfiguration<>(Set.of());
+        };
+    }
+}
+```
+
+**Объяснение:**
+
+- Мы отказываемся от `cb.construct(...)` в репозитории для DTO, вместо этого возвращаем сущности.
+- Применяем `EntityGraph`, чтобы загрузить связанные сущности одним запросом.
+- После получения сущностей в сервисном слое мапим их в `PaymentAnalyticDto` с помощью билдера.
+- При отсутствии нужных полей или связей они просто будут `null`.
+- Такой подход более гибкий: вы контролируете логику маппинга и не ограничены конструкторами или наличием всех полей в запросе.
+
+
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.data.domain.Page;
