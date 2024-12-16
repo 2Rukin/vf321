@@ -1,3 +1,30 @@
+public <X> GraphConfigurationBuilder<E> withSetSubgraph(SetAttribute<E, X> field, Consumer<GraphConfigurationBuilder<X>> builderConsumer) {
+    return withPluralSubgraph(field, builderConsumer);
+}
+
+public <X> GraphConfigurationBuilder<E> withListSubgraph(ListAttribute<E, X> field, Consumer<GraphConfigurationBuilder<X>> builderConsumer) {
+    return withPluralSubgraph(field, builderConsumer);
+}
+
+/**
+ * Общий метод для обработки PluralAttribute (SetAttribute, ListAttribute)
+ */
+private <X, C extends Collection<X>> GraphConfigurationBuilder<E> withPluralSubgraph(
+    PluralAttribute<E, X, C> field,
+    Consumer<GraphConfigurationBuilder<X>> builderConsumer
+) {
+    @SuppressWarnings("unchecked")
+    Class<X> elementClass = (Class<X>) field.getElementType().getJavaType();
+    GraphConfigurationBuilder<X> subBuilder = new GraphConfigurationBuilder<>(elementClass);
+    builderConsumer.accept(subBuilder);
+    SubgraphDescriptor<X> descriptor = new SubgraphDescriptor<>(field, subBuilder.getAttributes(), subBuilder.getSubgraphs());
+    subgraphs.add(descriptor);
+    return this;
+}
+
+
+
+
 Ниже представлен полный код решения с учётом всех предыдущих доработок. В нём:
 
 - Используется строгая типизация без `? super E`.
