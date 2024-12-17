@@ -1,42 +1,233 @@
-@Override
-public Expression<PfLoanFundsRqRegistryItemBo> getProjections(List<RegistryCodes> fields) {
-    return Projections.bean(
-        PfLoanFundsRqRegistryItemBo.class,
-        paymentAnalyticEntity.id.as("id"),
-        paymentAnalyticEntity.clientId.as("clientId"),
-        paymentAnalyticEntity.paymentDocumentId.as("paymentDocumentId"),
-        fields.contains(RegistryCodes.NUMBER) ? paymentAnalyticEntity.number.as("number") : null,
-        fields.contains(RegistryCodes.LOAN_FUNDS_REQUEST_STATUS) ? paymentAnalyticEntity.status.as("status") : null,
-        fields.contains(RegistryCodes.DATE) ? paymentAnalyticEntity.date.as("date") : null,
-        fields.contains(RegistryCodes.FUNDS_TYPE) ? paymentAnalyticEntity.fundsType.as("fundsType") : null,
-        fields.contains(RegistryCodes.CREDIT_AGREEMENT) ? paymentAnalyticEntity.creditAgreementNumber.as("creditAgreementNumber") : null,
-        fields.contains(RegistryCodes.CREDIT_AGREEMENT) ? paymentAnalyticEntity.creditAgreementDate.as("creditAgreementDate") : null,
-        fields.contains(RegistryCodes.PAYER_ACCOUNT) ? paymentAnalyticEntity.payerAccount.as("payerAccount") : null,
-        fields.contains(RegistryCodes.OB_ACCOUNT_FLAG) ? paymentAnalyticEntity.obcAccountFlag.as("obcAccountFlag") : null,
-        fields.contains(RegistryCodes.TRANCHE_ISSUE_DATE) ? paymentAnalyticEntity.trancheIssueDate.as("trancheIssueDate") : null,
-        fields.contains(RegistryCodes.AMOUNT) ? paymentAnalyticEntity.amount.as("amount") : null,
-        fields.contains(RegistryCodes.PAYMENT_PURPOSE) ? paymentAnalyticEntity.paymentPurpose.as("paymentPurpose") : null,
-        fields.contains(RegistryCodes.RECIPIENT_NAME) ? paymentAnalyticEntity.recipientName.as("recipientName") : null,
-        fields.contains(RegistryCodes.RECIPIENT_ACCOUNT) ? paymentAnalyticEntity.recipientAccount.as("recipientAccount") : null,
-        fields.contains(RegistryCodes.DVRU) ? paymentAnalyticEntity.dvruNumber.as("dvruNumber") : null,
-        fields.contains(RegistryCodes.DVRU) ? paymentAnalyticEntity.dvruDate.as("dvruDate") : null,
-        fields.contains(RegistryCodes.PAYMENT_TYPE) ? paymentAnalyticEntity.paymentType.as("paymentType") : null,
-        fields.contains(RegistryCodes.PAYMENT_OBJECT) ? Projections.list(
-            Projections.bean(
-                PfLoanFundsRqRegistryItemBo.PaymentObjectEntityBo.class,
-                paymentAnalyticEntity.paymentObjects.any().name.as("name"),
-                fields.contains(RegistryCodes.PAYMENT_OBJECT) ? paymentAnalyticEntity.paymentObjects.any().projectName.as("projectName") : null,
-                Projections.bean(
-                    PfLoanFundsRqRegistryItemBo.PaymentObjectSsrEntityBo.class,
-                    Projections.list(
-                        Projections.bean(
-                            PfLoanFundsRqRegistryItemBo.PaymentSsrArticleEntityBo.class,
-                            fields.contains(RegistryCodes.SSR_ARTICLE) ? paymentAnalyticEntity.paymentObjects.any()
-                                .paymentObjectSsr.paymentSsrs.any().code.as("code") : null
-                        )
-                    ).as("paymentSsrs")
-                ).as("paymentObjectSsr")
-            )
-        ).as("paymentObjects") : null
-    );
+```java
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
+import jakarta.persistence.TypedQuery;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.jpa.domain.Specification;
+import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
+import java.util.HashMap;
+import java.util.stream.Collectors;
+
+@Repository
+@Transactional(readOnly = true)
+public class PaymentAnalyticDtoRepositoryCustomImpl implements PaymentAnalyticDtoRepositoryCustom {
+
+    @PersistenceContext
+    private EntityManager em;
+
+    @Override
+    public Page<PaymentAnalyticDto> findBasicData(Specification<PaymentAnalyticEntity> predicate, Pageable pageable, Sort orderBy) {
+        var cb = em.getCriteriaBuilder();
+        var cq = cb.createQuery(PaymentAnalyticEntity.class);
+        var root = cq.from(PaymentAnalyticEntity.class);
+
+        if (predicate != null) {
+            cq.where(predicate.toPredicate(root, cq, cb));
+        }
+
+        if (orderBy != null) {
+            var orders = orderBy.stream()
+                    .map(o -> o.isAscending() ? cb.asc(root.get(o.getProperty())) : cb.desc(root.get(o.getProperty())))
+                    .collect(Collectors.toList());
+            cq.orderBy(orders);
+        }
+
+        TypedQuery<PaymentAnalyticEntity> query = em.createQuery(cq);
+        query.setFirstResult((int) pageable.getOffset());
+        query.setMaxResults(pageable.getPageSize());
+
+        List<PaymentAnalyticEntity> entities = query.getResultList();
+        long total = count(predicate);
+
+        List<PaymentAnalyticDto> dtoList = entities.stream()
+                .map(e -> PaymentAnalyticDto.builder()
+                        .id(e.getId())
+                        .clientId(e.getClientId())
+                        .paymentDocumentId(e.getPaymentDocumentId())
+                        .number(e.getNumber())
+                        .status(e.getStatus())
+                        .date(e.getDate())
+                        .fundsType(e.getFundsType())
+                        .creditAgreementNumber(e.getCreditAgreementNumber())
+                        .creditAgreementDate(e.getCreditAgreementDate())
+                        .payerAccount(e.getPayerAccount())
+                        .obcAccountFlag(e.getObcAccountFlag())
+                        .trancheIssueDate(e.getTrancheIssueDate())
+                        .amount(e.getAmount())
+                        .paymentPurpose(e.getPaymentPurpose())
+                        .recipientName(e.getRecipientName())
+                        .recipientAccount(e.getRecipientAccount())
+                        .dvruNumber(e.getDvruNumber())
+                        .dvruDate(e.getDvruDate())
+                        .paymentType(e.getPaymentType())
+                        .paymentObjects(Collections.emptySet())
+                        .build()
+                )
+                .collect(Collectors.toList());
+
+        return new PageImpl<>(dtoList, pageable, total);
+    }
+
+    @Override
+    public Page<PaymentAnalyticDto> findWithPaymentObjects(Specification<PaymentAnalyticEntity> predicate, Pageable pageable, Sort orderBy) {
+        var cb = em.getCriteriaBuilder();
+        var cq = cb.createQuery(PaymentAnalyticEntity.class);
+        var root = cq.from(PaymentAnalyticEntity.class);
+        root.fetch("paymentObjects", jakarta.persistence.criteria.JoinType.LEFT);
+
+        if (predicate != null) {
+            cq.where(predicate.toPredicate(root, cq, cb));
+        }
+
+        if (orderBy != null) {
+            var orders = orderBy.stream()
+                    .map(o -> o.isAscending() ? cb.asc(root.get(o.getProperty())) : cb.desc(root.get(o.getProperty())))
+                    .collect(Collectors.toList());
+            cq.orderBy(orders);
+        }
+
+        cq.distinct(true);
+        TypedQuery<PaymentAnalyticEntity> query = em.createQuery(cq);
+        query.setFirstResult((int) pageable.getOffset());
+        query.setMaxResults(pageable.getPageSize());
+
+        List<PaymentAnalyticEntity> entities = query.getResultList();
+        long total = count(predicate);
+
+        List<PaymentAnalyticDto> dtoList = entities.stream()
+                .map(e -> PaymentAnalyticDto.builder()
+                        .id(e.getId())
+                        .clientId(e.getClientId())
+                        .paymentDocumentId(e.getPaymentDocumentId())
+                        .number(e.getNumber())
+                        .status(e.getStatus())
+                        .date(e.getDate())
+                        .fundsType(e.getFundsType())
+                        .creditAgreementNumber(e.getCreditAgreementNumber())
+                        .creditAgreementDate(e.getCreditAgreementDate())
+                        .payerAccount(e.getPayerAccount())
+                        .obcAccountFlag(e.getObcAccountFlag())
+                        .trancheIssueDate(e.getTrancheIssueDate())
+                        .amount(e.getAmount())
+                        .paymentPurpose(e.getPaymentPurpose())
+                        .recipientName(e.getRecipientName())
+                        .recipientAccount(e.getRecipientAccount())
+                        .dvruNumber(e.getDvruNumber())
+                        .dvruDate(e.getDvruDate())
+                        .paymentType(e.getPaymentType())
+                        .paymentObjects(e.getPaymentObjects() == null ? Collections.emptySet() :
+                                e.getPaymentObjects().stream()
+                                        .map(po -> PaymentAnalyticDto.PaymentObjectEntityDto.builder()
+                                                .name(po.getName())
+                                                .projectName(po.getProjectName())
+                                                .paymentObjectSsr(null)
+                                                .build())
+                                        .collect(Collectors.toSet()))
+                        .build()
+                )
+                .collect(Collectors.toList());
+
+        return new PageImpl<>(dtoList, pageable, total);
+    }
+
+    @Override
+    public Page<PaymentAnalyticDto> findWithAllDetails(Specification<PaymentAnalyticEntity> predicate, Pageable pageable, Sort orderBy) {
+        var cb = em.getCriteriaBuilder();
+        var cq = cb.createQuery(PaymentAnalyticEntity.class);
+        var root = cq.from(PaymentAnalyticEntity.class);
+        var poFetch = root.fetch("paymentObjects", jakarta.persistence.criteria.JoinType.LEFT);
+        var ssrFetch = poFetch.fetch("paymentObjectSsr", jakarta.persistence.criteria.JoinType.LEFT);
+        ssrFetch.fetch("paymentSsrArticles", jakarta.persistence.criteria.JoinType.LEFT);
+
+        if (predicate != null) {
+            cq.where(predicate.toPredicate(root, cq, cb));
+        }
+
+        if (orderBy != null) {
+            var orders = orderBy.stream()
+                    .map(o -> o.isAscending() ? cb.asc(root.get(o.getProperty())) : cb.desc(root.get(o.getProperty())))
+                    .collect(Collectors.toList());
+            cq.orderBy(orders);
+        }
+
+        cq.distinct(true);
+        TypedQuery<PaymentAnalyticEntity> query = em.createQuery(cq);
+        query.setFirstResult((int) pageable.getOffset());
+        query.setMaxResults(pageable.getPageSize());
+
+        List<PaymentAnalyticEntity> entities = query.getResultList();
+        long total = count(predicate);
+
+        List<PaymentAnalyticDto> dtoList = entities.stream().map(e -> {
+            var poDtos = e.getPaymentObjects() == null ? Collections.emptySet() :
+                    e.getPaymentObjects().stream().map(po -> {
+                        PaymentAnalyticDto.PaymentObjectSsrEntityDto ssrDto = null;
+                        if (po.getPaymentObjectSsr() != null) {
+                            var articleDtos = po.getPaymentObjectSsr().getPaymentSsrArticles() == null
+                                    ? Collections.emptySet()
+                                    : po.getPaymentObjectSsr().getPaymentSsrArticles().stream()
+                                    .map(a -> PaymentAnalyticDto.PaymentSsrArticleDto.builder()
+                                            .code(a.getCode())
+                                            .build())
+                                    .collect(Collectors.toSet());
+
+                            ssrDto = PaymentAnalyticDto.PaymentObjectSsrEntityDto.builder()
+                                    .paymentSsrArticles(articleDtos)
+                                    .build();
+                        }
+
+                        return PaymentAnalyticDto.PaymentObjectEntityDto.builder()
+                                .name(po.getName())
+                                .projectName(po.getProjectName())
+                                .paymentObjectSsr(ssrDto)
+                                .build();
+                    }).collect(Collectors.toSet());
+
+            return PaymentAnalyticDto.builder()
+                    .id(e.getId())
+                    .clientId(e.getClientId())
+                    .paymentDocumentId(e.getPaymentDocumentId())
+                    .number(e.getNumber())
+                    .status(e.getStatus())
+                    .date(e.getDate())
+                    .fundsType(e.getFundsType())
+                    .creditAgreementNumber(e.getCreditAgreementNumber())
+                    .creditAgreementDate(e.getCreditAgreementDate())
+                    .payerAccount(e.getPayerAccount())
+                    .obcAccountFlag(e.getObcAccountFlag())
+                    .trancheIssueDate(e.getTrancheIssueDate())
+                    .amount(e.getAmount())
+                    .paymentPurpose(e.getPaymentPurpose())
+                    .recipientName(e.getRecipientName())
+                    .recipientAccount(e.getRecipientAccount())
+                    .dvruNumber(e.getDvruNumber())
+                    .dvruDate(e.getDvruDate())
+                    .paymentType(e.getPaymentType())
+                    .paymentObjects(poDtos)
+                    .build();
+        }).collect(Collectors.toList());
+
+        return new PageImpl<>(dtoList, pageable, total);
+    }
+
+    @Override
+    public long count(Specification<PaymentAnalyticEntity> predicate) {
+        var cb = em.getCriteriaBuilder();
+        var cq = cb.createQuery(Long.class);
+        var root = cq.from(PaymentAnalyticEntity.class);
+        cq.select(cb.count(root));
+        if (predicate != null) {
+            cq.where(predicate.toPredicate(root, cq, cb));
+        }
+        return em.createQuery(cq).getSingleResult();
+    }
 }
+```
