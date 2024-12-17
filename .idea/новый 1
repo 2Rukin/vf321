@@ -1,3 +1,36 @@
+public void merge(SubgraphDescriptor<?> other) {
+    // Объединение атрибутов
+    for (SingularAttribute<?, ?> attr : other.attributes) {
+        if (!this.attributes.contains(attr)) {
+            this.attributes.add((SingularAttribute<T, ?>) attr);
+        }
+    }
+
+    // Объединение сабграфов
+    if (other.subgraphs != null) {
+        for (SubgraphDescriptor<?> nested : other.subgraphs) {
+            Optional<SubgraphDescriptor<?>> existing = this.subgraphs.stream()
+                    .filter(sg -> sg.getField().equals(nested.getField()))
+                    .findFirst();
+
+            if (existing.isPresent()) {
+                // Рекурсивное объединение вложенных сабграфов
+                existing.get().merge(nested);
+            } else {
+                // Добавляем новый вложенный сабграф
+                SubgraphDescriptor<?> newNested = new SubgraphDescriptor<>(
+                        nested.getField(),
+                        new ArrayList<>(nested.getAttributes()),
+                        new ArrayList<>(nested.getSubgraphs())  // Глубокое копирование вложенных сабграфов
+                );
+                this.subgraphs.add(newNested);
+            }
+        }
+    }
+}
+
+
+
 ### Решение для исправления маппинга с учётом динамических вложенных сущностей
 
 Если структура данных может содержать **вложенные сущности**, и неизвестно заранее, какие именно поля были получены в результате запроса, то подход с использованием **MapStruct** можно усовершенствовать следующим образом:
