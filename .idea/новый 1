@@ -1,3 +1,59 @@
+import com.querydsl.core.types.Expression;
+import com.querydsl.core.types.OrderSpecifier;
+import com.querydsl.core.types.Predicate;
+import com.querydsl.jpa.impl.JPAQuery;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.support.PageableExecutionUtils;
+
+import javax.persistence.EntityManager;
+import java.util.List;
+
+public class PaymentAnalyticRepositoryCustomImpl implements PaymentAnalyticRepositoryCustom {
+
+    private final EntityManager entityManager;
+
+    @Autowired
+    public PaymentAnalyticRepositoryCustomImpl(EntityManager entityManager) {
+        this.entityManager = entityManager;
+    }
+
+    @Override
+    public Page<PaymentAnalyticDto> findAllWithFilters(Expression<PaymentAnalyticDto> projections,
+                                                       Predicate predicate,
+                                                       List<OrderSpecifier<?>> sortings,
+                                                       Pageable pageable) {
+        QPaymentAnalyticEntity paymentAnalyticEntity = QPaymentAnalyticEntity.paymentAnalyticEntity;
+
+        // Основной запрос
+        JPAQuery<PaymentAnalyticDto> query = new JPAQuery<>(entityManager)
+                .select(projections)
+                .from(paymentAnalyticEntity)
+                .where(predicate)
+                .orderBy(sortings.toArray(new OrderSpecifier[0]))
+                .offset(pageable.getOffset())
+                .limit(pageable.getPageSize());
+
+        // Выполнение запроса и получение результатов
+        List<PaymentAnalyticDto> results = query.fetch();
+
+        // Подсчёт totalCount
+        JPAQuery<Long> countQuery = new JPAQuery<>(entityManager)
+                .select(paymentAnalyticEntity.count())
+                .from(paymentAnalyticEntity)
+                .where(predicate);
+
+        // Возвращаем результат с пагинацией
+        return PageableExecutionUtils.getPage(results, pageable, countQuery::fetchOne);
+    }
+}
+
+
+
+
+
 public void merge(SubgraphDescriptor<?> other) {
     // Объединение атрибутов
     for (SingularAttribute<?, ?> attr : other.attributes) {
