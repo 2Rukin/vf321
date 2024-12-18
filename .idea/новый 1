@@ -1,3 +1,57 @@
+default PaymentAnalyticDto toDtoWithFields(PaymentAnalyticEntity entity, Set<String> fields) {
+    PaymentAnalyticDto dto = new PaymentAnalyticDto();
+
+    for (String field : fields) {
+        switch (field) {
+            case "id" -> dto.setId(entity.getId());
+            case "clientId" -> dto.setClientId(entity.getClientId());
+            case "paymentOrderId" -> dto.setPaymentDocumentId(entity.getPaymentDocumentId());
+            case "NUMBER" -> dto.setNumber(entity.getNumber());
+            case "LOAN_FUNDS_REQUEST_STATUS" -> dto.setStatus(entity.getStatus());
+            case "DATE" -> dto.setDate(entity.getDate());
+            case "FUNDS_TYPE" -> dto.setFundsType(entity.getFundsType());
+            case "CREDIT_AGREEMENT" -> {
+                dto.setCreditAgreementNumber(entity.getCreditAgreementNumber());
+                dto.setCreditAgreementDate(entity.getCreditAgreementDate());
+            }
+            case "PAYER_ACCOUNT" -> {
+                dto.setPayerAccount(entity.getPayerAccount());
+                dto.setObcAccountFlag(entity.getObcAccountFlag());
+            }
+            case "TRANCHE_ISSUE_DATE" -> dto.setTrancheIssueDate(entity.getTrancheIssueDate());
+            case "AMOUNT" -> dto.setAmount(entity.getAmount());
+            case "PAYMENT_PURPOSE" -> dto.setPaymentPurpose(entity.getPaymentPurpose());
+            case "RECIPIENT_NAME" -> dto.setRecipientName(entity.getRecipientName());
+            case "RECIPIENT_ACCOUNT" -> dto.setRecipientAccount(entity.getRecipientAccount());
+            case "DVRU" -> {
+                dto.setDvruNumber(entity.getDvruNumber());
+                dto.setDvruDate(entity.getDvruDate());
+            }
+            case "PAYMENT_TYPE" -> dto.setPaymentType(entity.getPaymentType());
+            case "PAYMENT_OBJECT" -> {
+                if (entity.getPaymentObjects() != null) {
+                    dto.setPaymentObjects(entity.getPaymentObjects().stream()
+                            .map(this::mapPaymentObject)
+                            .collect(Collectors.toSet()));
+                }
+            }
+            case "SSR_ARTICLE" -> {
+                if (entity.getPaymentObjects() != null) {
+                    dto.setPaymentObjects(entity.getPaymentObjects().stream()
+                            .map(paymentObject -> new PaymentAnalyticDto.PaymentObjectEntityDto(
+                                    paymentObject.getName(),
+                                    paymentObject.getProjectName(),
+                                    mapPaymentObjectSsr(paymentObject.getPaymentObjectSsr())
+                            )).collect(Collectors.toSet()));
+                }
+            }
+        }
+    }
+
+    return dto;
+}
+
+
 Чтобы маппить **связанные сущности** из вашей модели `PaymentAnalyticDto` и `PaymentAnalyticEntity`, можно использовать **MapStruct** с маппингом вложенных объектов и коллекций.
 
 ---
