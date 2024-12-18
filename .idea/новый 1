@@ -1,117 +1,65 @@
-public Page<PaymentAnalyticDto> findPaymentAnalyticWithJoins(
-        Specification<PaymentAnalyticEntity> spec,
-        Pageable pageable,
-        Sort orderBy) {
-    
-    CriteriaBuilder cb = entityManager.getCriteriaBuilder();
-    CriteriaQuery<Tuple> query = cb.createTupleQuery();
-    Root<PaymentAnalyticEntity> root = query.from(PaymentAnalyticEntity.class);
+Map<UUID, PFLloanFundsRqRegistryItemBo> analyticMap = new LinkedHashMap<>();
 
-    // JOINs
-    SetJoin<PaymentAnalyticEntity, PaymentObjectEntity> paymentObjectsJoin =
-            root.join(PaymentAnalyticEntity_.paymentObjects, JoinType.LEFT);
+for (Tuple tuple : tuples) {
+    UUID id = tuple.get(PaymentAnalyticEntity_.ID, UUID.class);
 
-    Join<PaymentObjectEntity, PaymentObjectSsrEntity> paymentObjectSsrJoin =
-            paymentObjectsJoin.join(PaymentObjectEntity_.paymentObjectSsr, JoinType.LEFT);
+    // Верхний уровень: PFLloanFundsRqRegistryItemBo
+    PFLloanFundsRqRegistryItemBo analyticDto = analyticMap.computeIfAbsent(id, k -> {
+        PFLloanFundsRqRegistryItemBo dto = new PFLloanFundsRqRegistryItemBo();
+        dto.setId(id);
+        dto.setClientId(tuple.get(PaymentAnalyticEntity_.CLIENT_ID, UUID.class));
+        dto.setPaymentDocumentId(tuple.get(PaymentAnalyticEntity_.PAYMENT_DOCUMENT_ID, UUID.class));
+        dto.setNumber(tuple.get(PaymentAnalyticEntity_.NUMBER, Integer.class));
+        dto.setStatus(tuple.get(PaymentAnalyticEntity_.STATUS, String.class));
+        dto.setDate(tuple.get(PaymentAnalyticEntity_.DATE, LocalDate.class));
 
-    SetJoin<PaymentObjectSsrEntity, PaymentSsrArticleEntity> paymentSsrArticlesJoin =
-            paymentObjectSsrJoin.join(PaymentSsrEntity_.paymentSsrArticles, JoinType.LEFT);
+        // Инициализируем LinkedHashSet для гарантирования порядка вставки и уникальности по ID
+        dto.setPaymentObjects(new LinkedHashSet<>());
+        return dto;
+    });
 
-    // Выборка полей
-    query.multiselect(
-            root.get(PaymentAnalyticEntity_.id).alias("id"),
-            root.get(PaymentAnalyticEntity_.clientId).alias("clientId"),
-            root.get(PaymentAnalyticEntity_.paymentDocumentId).alias("paymentDocumentId"),
-            root.get(PaymentAnalyticEntity_.number).alias("number"),
-            root.get(PaymentAnalyticEntity_.status).alias("status"),
-            root.get(PaymentAnalyticEntity_.date).alias("date"),
-            paymentObjectsJoin.get(PaymentObjectEntity_.name).alias("paymentObjectName"),
-            paymentObjectsJoin.get(PaymentObjectEntity_.projectName).alias("paymentObjectProjectName"),
-            paymentSsrArticlesJoin.get(PaymentSsrArticleEntity_.code).alias("articleCode")
-    );
+    // Второй уровень: PaymentObjectEntityBo
+    UUID paymentObjectId = tuple.get(PaymentObjectEntity_.ID, UUID.class);
+    String paymentObjectName = tuple.get(PaymentObjectEntity_.NAME, String.class);
+    String projectName = tuple.get(PaymentObjectEntity_.PROJECT_NAME, String.class);
 
-    // Применение фильтрации (Specification)
-    if (spec != null) {
-        Predicate predicate = spec.toPredicate(root, query, cb);
-        if (predicate != null) {
-            query.where(predicate);
-        }
-    }
+    if (paymentObjectId != null) {
+        PaymentObjectEntityBo paymentObjectDto = analyticDto.getPaymentObjects()
+            .stream()
+            .filter(po -> paymentObjectId.equals(po.getId()))
+            .findFirst()
+            .orElseGet(() -> {
+                PaymentObjectEntityBo newPaymentObject = new PaymentObjectEntityBo();
+                newPaymentObject.setId(paymentObjectId);
+                newPaymentObject.setName(paymentObjectName);
+                newPaymentObject.setProjectName(projectName);
 
-    // Сортировка (Sort)
-    if (orderBy.isSorted()) {
-        List<Order> orders = orderBy.stream()
-                .map(order -> {
-                    Path<Object> path = root.get(order.getProperty());
-                    return order.isAscending() ? cb.asc(path) : cb.desc(path);
-                })
-                .toList();
-        query.orderBy(orders);
-    }
+                // Третий уровень: PaymentObjectSsrEntityBo
+                // Здесь один объект, но для статей используем LinkedHashSet
+                PaymentObjectSsrEntityBo paymentObjectSsr = new PaymentObjectSsrEntityBo();
+                paymentObjectSsr.setPaymentSsrArticles(new LinkedHashSet<>());
+                newPaymentObject.setPaymentObjectSsr(paymentObjectSsr);
 
-    // Получение общего количества записей
-    CriteriaQuery<Long> countQuery = cb.createQuery(Long.class);
-    Root<PaymentAnalyticEntity> countRoot = countQuery.from(PaymentAnalyticEntity.class);
-    countQuery.select(cb.count(countRoot));
+                analyticDto.getPaymentObjects().add(newPaymentObject);
+                return newPaymentObject;
+            });
 
-    if (spec != null) {
-        Predicate countPredicate = spec.toPredicate(countRoot, countQuery, cb);
-        if (countPredicate != null) {
-            countQuery.where(countPredicate);
-        }
-    }
+        // Четвёртый уровень: PaymentSsrArticleEntityBo
+        UUID articleId = tuple.get(PaymentSsrArticleEntity_.ID, UUID.class);
+        String articleCode = tuple.get(PaymentSsrArticleEntity_.CODE, String.class);
 
-    Long totalCount = entityManager.createQuery(countQuery).getSingleResult();
+        if (articleId != null) {
+            boolean articleExists = paymentObjectDto.getPaymentObjectSsr().getPaymentSsrArticles()
+                .stream()
+                .anyMatch(article -> articleId.equals(article.getId()));
 
-    // Пагинация
-    TypedQuery<Tuple> typedQuery = entityManager.createQuery(query);
-    typedQuery.setFirstResult((int) pageable.getOffset());
-    typedQuery.setMaxResults(pageable.getPageSize());
-
-    // Получение данных
-    List<Tuple> tuples = typedQuery.getResultList();
-
-    // Маппинг результатов в DTO
-    Map<UUID, PaymentAnalyticDto> analyticMap = new LinkedHashMap<>();
-
-    for (Tuple tuple : tuples) {
-        UUID id = tuple.get("id", UUID.class);
-
-        // Верхний уровень
-        PaymentAnalyticDto analyticDto = analyticMap.computeIfAbsent(id, k -> {
-            PaymentAnalyticDto dto = new PaymentAnalyticDto();
-            dto.setId(tuple.get("id", UUID.class));
-            dto.setClientId(tuple.get("clientId", UUID.class));
-            dto.setPaymentDocumentId(tuple.get("paymentDocumentId", UUID.class));
-            dto.setNumber(tuple.get("number", Integer.class));
-            dto.setStatus(tuple.get("status", PaymentAnalyticStatus.class));
-            dto.setDate(tuple.get("date", LocalDate.class));
-            dto.setPaymentObjects(new HashSet<>());
-            return dto;
-        });
-
-        // Вложенный уровень: PaymentObjectEntityDto
-        String paymentObjectName = tuple.get("paymentObjectName", String.class);
-        if (paymentObjectName != null) {
-            PaymentAnalyticDto.PaymentObjectEntityDto paymentObjectDto = new PaymentAnalyticDto.PaymentObjectEntityDto();
-            paymentObjectDto.setName(paymentObjectName);
-            paymentObjectDto.setProjectName(tuple.get("paymentObjectProjectName", String.class));
-
-            // Вложенный уровень: PaymentSsrArticleDto
-            String articleCode = tuple.get("articleCode", String.class);
-            if (articleCode != null) {
-                PaymentAnalyticDto.PaymentObjectSsrEntityDto ssrEntityDto = new PaymentAnalyticDto.PaymentObjectSsrEntityDto();
-                PaymentAnalyticDto.PaymentSsrArticleDto articleDto = new PaymentAnalyticDto.PaymentSsrArticleDto();
+            if (!articleExists) {
+                PaymentSsrArticleEntityBo articleDto = new PaymentSsrArticleEntityBo();
+                articleDto.setId(articleId);
                 articleDto.setCode(articleCode);
 
-                ssrEntityDto.setPaymentSsrArticles(Set.of(articleDto));
-                paymentObjectDto.setPaymentObjectSsr(ssrEntityDto);
+                paymentObjectDto.getPaymentObjectSsr().getPaymentSsrArticles().add(articleDto);
             }
-            analyticDto.getPaymentObjects().add(paymentObjectDto);
         }
     }
-
-    // Конвертация в Page
-    List<PaymentAnalyticDto> result = new ArrayList<>(analyticMap.values());
-    return new PageImpl<>(result, pageable, totalCount);
 }
