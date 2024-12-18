@@ -1,3 +1,170 @@
+Для настройки маппера в сервисе и корректной работы с условной логикой маппинга для `PAYMENT_OBJECT` и `SSR_ARTICLE`, выполните следующие шаги:
+
+---
+
+### Шаг 1. **Обновите основной маппер**
+
+**PFLoanFundsRqRegistryItemMapper** должен принимать список `fields` через `@Context` и передавать его вложенным мапперам:
+
+#### Обновленный маппер:
+```java
+@Mapper(config = MainMapperConfig.class, uses = {PFLoanFundsRqPaymentObjectMapper.class})
+public interface PFLoanFundsRqRegistryItemMapper {
+
+    @Mappings({
+        @Mapping(target = "id", source = "id"),
+        @Mapping(target = "clientId", source = "clientId"),
+        @Mapping(target = "paymentDocumentId", source = "paymentDocumentId"),
+        @Mapping(target = "paymentObjects", ignore = true) // Обрабатывается вручную
+    })
+    PFLoanFundsRqRegistryItemBo entityToBo(PaymentAnalyticEntity entity);
+
+    // Условный маппинг
+    default PFLoanFundsRqRegistryItemBo mapFieldsConditionally(
+            @MappingTarget PFLoanFundsRqRegistryItemBo bo,
+            PaymentAnalyticEntity entity,
+            @Context List<RegistryCodes> fields) {
+
+        if (fields == null || fields.isEmpty()) return bo;
+
+        for (RegistryCodes field : fields) {
+            switch (field) {
+                case PAYMENT_OBJECT, SSR_ARTICLE -> {
+                    if (entity.getPaymentObjects() != null) {
+                        bo.setPaymentObjects(entity.getPaymentObjects().stream()
+                                .map(paymentObjectEntity ->
+                                        paymentObjectMapper.mapPaymentObjectConditionally(
+                                                new PaymentObjectEntityBo(),
+                                                paymentObjectEntity,
+                                                fields))
+                                .collect(Collectors.toCollection(LinkedHashSet::new)));
+                    } else {
+                        bo.setPaymentObjects(null);
+                    }
+                }
+                // Другие поля маппим здесь
+                case AMOUNT -> bo.setAmount(entity.getAmount());
+                case DATE -> bo.setDate(entity.getDate());
+                // Добавьте другие поля по необходимости
+            }
+        }
+        return bo;
+    }
+
+    List<PFLoanFundsRqRegistryItemBo> entityToBoList(List<PaymentAnalyticEntity> entities, @Context List<RegistryCodes> fields);
+}
+```
+
+---
+
+### Шаг 2. **Настройте вызов маппера в сервисе**
+
+В вашем сервисе вы должны передать список `fields` при вызове маппинга.
+
+**Обновленный вызов маппера:**
+```java
+@Autowired
+private PFLoanFundsRqRegistryItemMapper mapper;
+
+@Override
+public PFLoanFundsRqRegistryResponse getFilteredSortingPageByRegistryCodes(
+        @NonNull Set<UUID> orgIds,
+        @Nullable PaginationRequest pagination,
+        @Nullable List<SortingDto> sortDtos,
+        @Nullable PFLoanFundsRqRegistryFilterDto filterDto,
+        @NonNull List<RegistryCodes> fields) {
+
+    // Спецификация для фильтрации
+    var specification = new SpecificationBuilder<PaymentAnalyticEntity>()
+            .add((root, query, criteriaBuilder) ->
+                    root.get(PaymentAnalyticEntity_.clientId.getName()).in(orgIds))
+            .add(new RqRegistryPaymentAnalyticSpec(filterDto))
+            .build();
+
+    Pageable pageable = getPageable(pagination, sortings.getSort(sortDtos));
+
+    // Запрос с пагинацией
+    Page<PaymentAnalyticEntity> pagedResult = repository.findAll(specification, pageable);
+
+    // Маппинг с учётом условий
+    List<PFLoanFundsRqRegistryItemBo> boDto = pagedResult.getContent().stream()
+            .map(entity -> {
+                var bo = mapper.entityToBo(entity);
+                return mapper.mapFieldsConditionally(bo, entity, fields);
+            })
+            .collect(Collectors.toList());
+
+    // Собираем ответ
+    return new PFLoanFundsRqRegistryResponse(boDto, pagedResult.getTotalElements());
+}
+```
+
+---
+
+### Шаг 3. **Убедитесь, что все вложенные мапперы настроены**
+
+#### **PFLoanFundsRqPaymentObjectMapper**:
+```java
+@Mapper(config = MainMapperConfig.class, uses = PFLoanFundsRqPaymentObjectSsrMapper.class)
+public interface PFLoanFundsRqPaymentObjectMapper {
+
+    @Mapping(target = "name", source = "name")
+    @Mapping(target = "projectName", source = "projectName")
+    PaymentObjectEntityBo entityToBo(PaymentObjectEntity entity);
+
+    default PaymentObjectEntityBo mapPaymentObjectConditionally(
+            @MappingTarget PaymentObjectEntityBo bo,
+            PaymentObjectEntity entity,
+            @Context List<RegistryCodes> fields) {
+
+        if (fields.contains(RegistryCodes.SSR_ARTICLE) && entity.getPaymentObjectSsr() != null) {
+            bo.setPaymentObjectSsr(paymentObjectSsrMapper.mapPaymentObjectConditionally(
+                    entity.getPaymentObjectSsr(), fields));
+        }
+        return bo;
+    }
+}
+```
+
+#### **PFLoanFundsRqPaymentObjectSsrMapper**:
+```java
+@Mapper(config = MainMapperConfig.class, uses = PFLoanFundsRqPaymentSsrArticleMapper.class)
+public interface PFLoanFundsRqPaymentObjectSsrMapper {
+
+    @Mapping(target = "paymentSsrArticles", ignore = true)
+    PaymentObjectSsrEntityBo entityToBo(PaymentObjectSsrEntity entity);
+
+    default PaymentObjectSsrEntityBo mapPaymentObjectConditionally(
+            PaymentObjectSsrEntity entity,
+            @Context List<RegistryCodes> fields) {
+
+        var bo = entityToBo(entity);
+        if (fields.contains(RegistryCodes.SSR_ARTICLE) && entity.getPaymentSsrArticles() != null) {
+            bo.setPaymentSsrArticles(entity.getPaymentSsrArticles().stream()
+                    .map(paymentSsrArticleMapper::entityToBo)
+                    .collect(Collectors.toCollection(LinkedHashSet::new)));
+        }
+        return bo;
+    }
+}
+```
+
+---
+
+### Результат:
+1. **PAYMENT_OBJECT и SSR_ARTICLE** обрабатываются корректно при наличии в `fields`.
+2. Маппинг вызывается в **сервисе** с передачей `fields` в `mapFieldsConditionally`.
+3. Условная логика вложенных мапперов эффективно используется для обработки дочерних объектов.
+
+---
+
+### Пример вызова в сервисе:
+```java
+List<RegistryCodes> fields = List.of(RegistryCodes.PAYMENT_OBJECT, RegistryCodes.SSR_ARTICLE);
+response = getFilteredSortingPageByRegistryCodes(orgIds, pagination, sortDtos, filterDto, fields);
+System.out.println(response);
+```
+
 ### Проблема и требование:
 1. **PAYMENT_OBJECT и SSR_ARTICLE** – оба требуют условного маппинга.
 2. Поле `code` для **SSR_ARTICLE** находится внутри `LinkedHashSet` в родительской сущности.
