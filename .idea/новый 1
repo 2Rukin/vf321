@@ -1,3 +1,170 @@
+### Проблема и требование:
+1. **PAYMENT_OBJECT и SSR_ARTICLE** – оба требуют условного маппинга.
+2. Поле `code` для **SSR_ARTICLE** находится внутри `LinkedHashSet` в родительской сущности.
+3. Нам нужно эффективно доставать **code** и маппить соответствующие структуры **при наличии конкретных кодов** из `fields`.
+
+---
+
+### Подход к решению:
+1. **PAYMENT_OBJECT**: Проверяем наличие `PaymentObjectEntity` и маппим его, используя вложенные мапперы.
+2. **SSR_ARTICLE**: Проходим по `LinkedHashSet` в родительской сущности, фильтруем элементы на основе кода и маппим только при условии.
+
+---
+
+## Оптимизированный Маппер для `PAYMENT_OBJECT` и `SSR_ARTICLE`
+
+### 1. **PFLoanFundsRqPaymentObjectMapper**: Маппинг `PAYMENT_OBJECT`
+
+```java
+@Mapper(config = MainMapperConfig.class, uses = PFLoanFundsRqPaymentObjectSsrMapper.class)
+public interface PFLoanFundsRqPaymentObjectMapper {
+
+    @Mapping(target = "name", source = "name")
+    @Mapping(target = "projectName", source = "projectName")
+    PaymentObjectEntityBo entityToBo(PaymentObjectEntity entity);
+
+    // Условный маппинг для PAYMENT_OBJECT
+    default PaymentObjectEntityBo mapPaymentObjectConditionally(@MappingTarget PaymentObjectEntityBo bo,
+                                                                PaymentObjectEntity entity,
+                                                                @Context List<RegistryCodes> fields) {
+        if (entity.getPaymentObjectSsr() != null && fields.contains(RegistryCodes.SSR_ARTICLE)) {
+            bo.setPaymentObjectSsr(
+                paymentObjectSsrMapper.mapPaymentObjectConditionally(
+                    entity.getPaymentObjectSsr(), fields
+                )
+            );
+        } else {
+            bo.setPaymentObjectSsr(null);
+        }
+        return bo;
+    }
+}
+```
+
+---
+
+### 2. **PFLoanFundsRqPaymentObjectSsrMapper**: Маппинг `SSR_ARTICLE`
+
+```java
+@Mapper(config = MainMapperConfig.class, uses = PFLoanFundsRqPaymentSsrArticleMapper.class)
+public interface PFLoanFundsRqPaymentObjectSsrMapper {
+
+    @Mapping(target = "paymentSsrArticles", ignore = true)
+    PaymentObjectSsrEntityBo entityToBo(PaymentObjectSsrEntity entity);
+
+    // Условный маппинг для SSR_ARTICLE
+    default PaymentObjectSsrEntityBo mapPaymentObjectConditionally(PaymentObjectSsrEntity entity,
+                                                                   @Context List<RegistryCodes> fields) {
+        var bo = entityToBo(entity);
+
+        if (entity.getPaymentSsrArticles() != null && fields.contains(RegistryCodes.SSR_ARTICLE)) {
+            bo.setPaymentSsrArticles(
+                entity.getPaymentSsrArticles().stream()
+                      .filter(article -> article.getCode() != null)
+                      .map(article -> paymentSsrArticleMapper.entityToBo(article))
+                      .collect(Collectors.toCollection(LinkedHashSet::new))
+            );
+        } else {
+            bo.setPaymentSsrArticles(null);
+        }
+        return bo;
+    }
+}
+```
+
+---
+
+### 3. **PFLoanFundsRqPaymentSsrArticleMapper**: Маппинг для статей (`code`)
+
+```java
+@Mapper(config = MainMapperConfig.class)
+public interface PFLoanFundsRqPaymentSsrArticleMapper {
+
+    @Mapping(target = "code", source = "code")
+    PaymentSsrArticleEntityBo entityToBo(PaymentSsrArticleEntity entity);
+
+    default void mapSsrArticleCodeConditionally(@MappingTarget PaymentSsrArticleEntityBo bo,
+                                                PaymentSsrArticleEntity entity,
+                                                @Context List<RegistryCodes> fields) {
+        if (entity.getCode() != null && fields.contains(RegistryCodes.SSR_ARTICLE)) {
+            bo.setCode(entity.getCode());
+        } else {
+            bo.setCode(null);
+        }
+    }
+}
+```
+
+---
+
+### 4. **PAYMENT_ANALYTIC Маппер**: Главный маппер
+
+```java
+@Mapper(config = MainMapperConfig.class, uses = PFLoanFundsRqPaymentObjectMapper.class)
+public interface PFLoanFundsRqPaymentAnalyticMapper {
+
+    @Mapping(target = "id", source = "id")
+    @Mapping(target = "clientId", source = "clientId")
+    @Mapping(target = "paymentObjects", ignore = true)
+    PaymentAnalyticDto entityToBo(PaymentAnalyticEntity entity);
+
+    default PaymentAnalyticDto mapFieldsConditionally(@MappingTarget PaymentAnalyticDto dto,
+                                                      PaymentAnalyticEntity entity,
+                                                      @Context List<RegistryCodes> fields) {
+        if (fields.contains(RegistryCodes.PAYMENT_OBJECT)) {
+            dto.setPaymentObjects(entity.getPaymentObjects().stream()
+                    .map(object -> paymentObjectMapper.mapPaymentObjectConditionally(
+                            new PaymentObjectEntityBo(), object, fields
+                    ))
+                    .collect(Collectors.toCollection(LinkedHashSet::new))
+            );
+        }
+        return dto;
+    }
+}
+```
+
+---
+
+### Объяснение:
+1. **Мапперы вложенных объектов**:
+   - Используют `@Context List<RegistryCodes>` для проверки наличия кода.
+   - Поле `code` маппится только если условие выполнено.
+
+2. **Фильтрация `SSR_ARTICLE`**:
+   - Проверяется `LinkedHashSet` на наличие элементов с `code`.
+   - Маппятся только подходящие элементы.
+
+3. **Главный маппер**:
+   - Отвечает за вызов **`PAYMENT_OBJECT`** и вложенных мапперов.
+
+---
+
+### Пример вызова:
+
+```java
+@Autowired
+private PFLoanFundsRqPaymentAnalyticMapper mapper;
+
+public void exampleUsage() {
+    var entity = new PaymentAnalyticEntity(); // Создаём сущность
+    var fields = List.of(RegistryCodes.PAYMENT_OBJECT, RegistryCodes.SSR_ARTICLE);
+
+    PaymentAnalyticDto dto = mapper.mapFieldsConditionally(new PaymentAnalyticDto(), entity, fields);
+
+    System.out.println(dto);
+}
+```
+
+---
+
+### Итог:
+1. **Маппинг с условной логикой** реализован через `@Context` и `default` методы.
+2. **PAYMENT_OBJECT** и **SSR_ARTICLE** обрабатываются только при наличии кодов в `fields`.
+3. **LinkedHashSet** обрабатывается с фильтрацией и передачей значений в дочерние мапперы.
+4. Все мапперы связаны друг с другом с помощью **`uses`**.
+
+
 default PaymentAnalyticDto toDtoWithFields(PaymentAnalyticEntity entity, Set<String> fields) {
     PaymentAnalyticDto dto = new PaymentAnalyticDto();
 
