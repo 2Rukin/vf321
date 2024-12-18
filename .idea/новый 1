@@ -1,4 +1,8 @@
-public List<PaymentAnalyticDto> findPaymentAnalyticWithJoins() {
+public Page<PaymentAnalyticDto> findPaymentAnalyticWithJoins(
+        Specification<PaymentAnalyticEntity> spec,
+        Pageable pageable,
+        Sort orderBy) {
+    
     CriteriaBuilder cb = entityManager.getCriteriaBuilder();
     CriteriaQuery<Tuple> query = cb.createTupleQuery();
     Root<PaymentAnalyticEntity> root = query.from(PaymentAnalyticEntity.class);
@@ -11,7 +15,7 @@ public List<PaymentAnalyticDto> findPaymentAnalyticWithJoins() {
             paymentObjectsJoin.join(PaymentObjectEntity_.paymentObjectSsr, JoinType.LEFT);
 
     SetJoin<PaymentObjectSsrEntity, PaymentSsrArticleEntity> paymentSsrArticlesJoin =
-            paymentObjectSsrJoin.join(PaymentObjectSsrEntity_.paymentSsrArticles, JoinType.LEFT);
+            paymentObjectSsrJoin.join(PaymentSsrEntity_.paymentSsrArticles, JoinType.LEFT);
 
     // Выборка полей
     query.multiselect(
@@ -26,7 +30,46 @@ public List<PaymentAnalyticDto> findPaymentAnalyticWithJoins() {
             paymentSsrArticlesJoin.get(PaymentSsrArticleEntity_.code).alias("articleCode")
     );
 
-    List<Tuple> tuples = entityManager.createQuery(query).getResultList();
+    // Применение фильтрации (Specification)
+    if (spec != null) {
+        Predicate predicate = spec.toPredicate(root, query, cb);
+        if (predicate != null) {
+            query.where(predicate);
+        }
+    }
+
+    // Сортировка (Sort)
+    if (orderBy.isSorted()) {
+        List<Order> orders = orderBy.stream()
+                .map(order -> {
+                    Path<Object> path = root.get(order.getProperty());
+                    return order.isAscending() ? cb.asc(path) : cb.desc(path);
+                })
+                .toList();
+        query.orderBy(orders);
+    }
+
+    // Получение общего количества записей
+    CriteriaQuery<Long> countQuery = cb.createQuery(Long.class);
+    Root<PaymentAnalyticEntity> countRoot = countQuery.from(PaymentAnalyticEntity.class);
+    countQuery.select(cb.count(countRoot));
+
+    if (spec != null) {
+        Predicate countPredicate = spec.toPredicate(countRoot, countQuery, cb);
+        if (countPredicate != null) {
+            countQuery.where(countPredicate);
+        }
+    }
+
+    Long totalCount = entityManager.createQuery(countQuery).getSingleResult();
+
+    // Пагинация
+    TypedQuery<Tuple> typedQuery = entityManager.createQuery(query);
+    typedQuery.setFirstResult((int) pageable.getOffset());
+    typedQuery.setMaxResults(pageable.getPageSize());
+
+    // Получение данных
+    List<Tuple> tuples = typedQuery.getResultList();
 
     // Маппинг результатов в DTO
     Map<UUID, PaymentAnalyticDto> analyticMap = new LinkedHashMap<>();
@@ -68,5 +111,7 @@ public List<PaymentAnalyticDto> findPaymentAnalyticWithJoins() {
         }
     }
 
-    return new ArrayList<>(analyticMap.values());
+    // Конвертация в Page
+    List<PaymentAnalyticDto> result = new ArrayList<>(analyticMap.values());
+    return new PageImpl<>(result, pageable, totalCount);
 }
