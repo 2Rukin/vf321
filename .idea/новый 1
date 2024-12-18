@@ -1,3 +1,183 @@
+Чтобы маппить **связанные сущности** из вашей модели `PaymentAnalyticDto` и `PaymentAnalyticEntity`, можно использовать **MapStruct** с маппингом вложенных объектов и коллекций.
+
+---
+
+## Полный пример маппинга с вложенными сущностями
+
+### 1. **Конфигурация MapStruct**
+
+Создаем конфигурацию для общего использования в мапперах:
+
+```java
+import org.mapstruct.MapperConfig;
+import org.mapstruct.ReportingPolicy;
+import org.mapstruct.CollectionMappingStrategy;
+
+@MapperConfig(
+    unmappedTargetPolicy = ReportingPolicy.IGNORE, // Игнорировать не замапленные поля
+    collectionMappingStrategy = CollectionMappingStrategy.ACCESSOR_ONLY, // Коллекции маппятся через геттеры/сеттеры
+    componentModel = "spring"
+)
+public interface MainMapperConfig {
+}
+```
+
+---
+
+### 2. **Создание мапперов для вложенных объектов**
+
+1. **Mapper для `PaymentSsrArticleDto`**:
+
+```java
+import org.mapstruct.Mapper;
+
+@Mapper(config = MainMapperConfig.class)
+public interface PaymentSsrArticleMapper {
+    PaymentAnalyticDto.PaymentSsrArticleDto toDto(PaymentSsrArticleEntity entity);
+}
+```
+
+2. **Mapper для `PaymentObjectSsrEntityDto`**:
+
+```java
+import org.mapstruct.Mapper;
+import org.mapstruct.Mapping;
+
+@Mapper(config = MainMapperConfig.class, uses = PaymentSsrArticleMapper.class)
+public interface PaymentObjectSsrMapper {
+    @Mapping(target = "paymentSsrArticles", source = "paymentSsrArticles")
+    PaymentAnalyticDto.PaymentObjectSsrEntityDto toDto(PaymentObjectSsrEntity entity);
+}
+```
+
+3. **Mapper для `PaymentObjectEntityDto`**:
+
+```java
+import org.mapstruct.Mapper;
+import org.mapstruct.Mapping;
+
+@Mapper(config = MainMapperConfig.class, uses = PaymentObjectSsrMapper.class)
+public interface PaymentObjectMapper {
+    @Mapping(target = "name", source = "name")
+    @Mapping(target = "projectName", source = "projectName")
+    @Mapping(target = "paymentObjectSsr", source = "paymentObjectSsr")
+    PaymentAnalyticDto.PaymentObjectEntityDto toDto(PaymentObjectEntity entity);
+}
+```
+
+---
+
+### 3. **Главный маппер для `PaymentAnalyticDto`**
+
+Главный маппер использует вложенные мапперы:
+
+```java
+import org.mapstruct.Mapper;
+import org.mapstruct.Mapping;
+import org.mapstruct.Mappings;
+
+@Mapper(config = MainMapperConfig.class, uses = PaymentObjectMapper.class)
+public interface PaymentAnalyticMapper {
+
+    @Mappings({
+        @Mapping(target = "id", source = "id"),
+        @Mapping(target = "clientId", source = "clientId"),
+        @Mapping(target = "paymentDocumentId", source = "paymentDocumentId"),
+        @Mapping(target = "number", source = "number"),
+        @Mapping(target = "status", source = "status"),
+        @Mapping(target = "date", source = "date"),
+        @Mapping(target = "fundsType", source = "fundsType"),
+        @Mapping(target = "creditAgreementNumber", source = "creditAgreementNumber"),
+        @Mapping(target = "creditAgreementDate", source = "creditAgreementDate"),
+        @Mapping(target = "payerAccount", source = "payerAccount"),
+        @Mapping(target = "obcAccountFlag", source = "obcAccountFlag"),
+        @Mapping(target = "trancheIssueDate", source = "trancheIssueDate"),
+        @Mapping(target = "amount", source = "amount"),
+        @Mapping(target = "paymentPurpose", source = "paymentPurpose"),
+        @Mapping(target = "recipientName", source = "recipientName"),
+        @Mapping(target = "recipientAccount", source = "recipientAccount"),
+        @Mapping(target = "dvruNumber", source = "dvruNumber"),
+        @Mapping(target = "dvruDate", source = "dvruDate"),
+        @Mapping(target = "paymentType", source = "paymentType"),
+        @Mapping(target = "paymentObjects", source = "paymentObjects")
+    })
+    PaymentAnalyticDto toDto(PaymentAnalyticEntity entity);
+}
+```
+
+---
+
+### 4. **Пример сущностей**
+
+```java
+public class PaymentAnalyticEntity {
+    private UUID id;
+    private UUID clientId;
+    private UUID paymentDocumentId;
+    private Integer number;
+    private PaymentAnalyticStatusEnum status;
+    private LocalDate date;
+    private FundsType fundsType;
+    private String creditAgreementNumber;
+    private LocalDate creditAgreementDate;
+    private String payerAccount;
+    private Boolean obcAccountFlag;
+    private LocalDate trancheIssueDate;
+    private BigDecimal amount;
+    private String paymentPurpose;
+    private String recipientName;
+    private String recipientAccount;
+    private String dvruNumber;
+    private LocalDate dvruDate;
+    private PaymentType paymentType;
+    private Set<PaymentObjectEntity> paymentObjects;
+}
+
+public class PaymentObjectEntity {
+    private String name;
+    private String projectName;
+    private PaymentObjectSsrEntity paymentObjectSsr;
+}
+
+public class PaymentObjectSsrEntity {
+    private Set<PaymentSsrArticleEntity> paymentSsrArticles;
+}
+
+public class PaymentSsrArticleEntity {
+    private String code;
+}
+```
+
+---
+
+### 5. **Использование мапперов**
+
+**Пример вызова:**
+
+```java
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+@Service
+public class PaymentAnalyticService {
+
+    @Autowired
+    private PaymentAnalyticMapper mapper;
+
+    public PaymentAnalyticDto mapToDto(PaymentAnalyticEntity entity) {
+        return mapper.toDto(entity);
+    }
+}
+```
+
+---
+
+## Результат
+
+- **Главный маппер** `PaymentAnalyticMapper` вызывает вложенные мапперы для связанных сущностей.
+- **MapStruct** автоматически обрабатывает коллекции и вложенные связи.
+- Связанные сущности маппятся в **DTO**, сохраняя структуру и вложенность.
+
 @Query(value = "SELECT DISTINCT p " +
                "FROM PaymentAnalyticEntity p " +
                "LEFT JOIN FETCH p.paymentObjects po " +
