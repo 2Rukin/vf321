@@ -1,3 +1,13 @@
+@Query(value = "SELECT DISTINCT p " +
+               "FROM PaymentAnalyticEntity p " +
+               "LEFT JOIN FETCH p.paymentObjects po " +
+               "LEFT JOIN FETCH po.paymentObjectSsr paymentSsr " +
+               "LEFT JOIN FETCH paymentSsr.paymentSsrArticles articles",
+       countQuery = "SELECT COUNT(DISTINCT p) FROM PaymentAnalyticEntity p")
+Page<PaymentAnalyticEntity> findAllWithRelations(Specification<PaymentAnalyticEntity> spec, Pageable pageable);
+
+
+
 Map<UUID, PFLloanFundsRqRegistryItemBo> analyticMap = new LinkedHashMap<>();
 
 for (Tuple tuple : tuples) {
