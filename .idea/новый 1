@@ -2108,3 +2108,188 @@ public class PFLoanFundsRqRegistryPaymentAnalyticSortingSpecification implements
         return descending ? cb.desc(expression) : cb.asc(expression);
     }
 }
+************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************
+************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************
+************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************************
+Для предоставления стандартных методов JPA репозитория и использования возможностей метасущностей Hibernate, необходимо провести рефакторинг, интегрировав спецификацию в методы JPA. В результате репозиторий будет использовать `JpaSpecificationExecutor` для обработки запросов с фильтрацией и сортировкой, а для работы с группировками будет применяться дополнительная кастомизация. 
+
+---
+
+### Полный Код Реализации
+
+#### 1. **Расширение Репозитория**
+
+Обновим интерфейс `PaymentAnalyticRepository`:
+
+```java
+import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.PagingAndSortingRepository;
+import org.springframework.stereotype.Repository;
+
+import java.util.UUID;
+
+@Repository
+public interface PaymentAnalyticRepository extends 
+        PagingAndSortingRepository<PaymentAnalyticEntity, UUID>, 
+        JpaSpecificationExecutor<PaymentAnalyticEntity> {
+
+    // Кастомные методы (при необходимости) можно добавить здесь.
+}
+```
+
+---
+
+#### 2. **Реализация Сервиса**
+
+Сервис будет использовать `JpaSpecificationExecutor` для обработки фильтрации и сортировки, а также будет поддерживать дополнительную функциональность для подсчета по группам.
+
+```java
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.domain.Specification;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import lombok.NonNull;
+import org.springframework.lang.Nullable;
+
+import java.util.Map;
+import java.util.List;
+
+@Service
+public class PaymentAnalyticService {
+
+    private final PaymentAnalyticRepository repository;
+    private final GroupCountService groupCountService;
+
+    public PaymentAnalyticService(PaymentAnalyticRepository repository, GroupCountService groupCountService) {
+        this.repository = repository;
+        this.groupCountService = groupCountService;
+    }
+
+    /**
+     * Получает отфильтрованные и отсортированные записи.
+     *
+     * @param specification Спецификация фильтрации и сортировки.
+     * @param pageable       Объект пагинации.
+     * @return Страница результатов.
+     */
+    @Transactional(readOnly = true)
+    public Page<PaymentAnalyticEntity> getFilteredAndSortedData(
+            @Nullable Specification<PaymentAnalyticEntity> specification,
+            @NonNull Pageable pageable) {
+
+        return repository.findAll(specification, pageable);
+    }
+
+    /**
+     * Подсчитывает количество элементов в группах на основе фильтрации.
+     *
+     * @param countEnum      Тип группировки (например, по статусу, получателю).
+     * @param specification  Спецификация фильтрации.
+     * @return Карта групп и их количества.
+     */
+    @Transactional(readOnly = true)
+    public <E> Map<RegistryCountEnum, List<Pair<E, Long>>> getCountByGroups(
+            @NonNull RegistryCountEnum countEnum,
+            @Nullable Specification<PaymentAnalyticEntity> specification) {
+
+        return groupCountService.countByGroup(countEnum, specification);
+    }
+}
+```
+
+---
+
+#### 3. **Пример Использования Сервиса**
+
+```java
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.stereotype.Component;
+
+@Component
+public class PaymentAnalyticComponent {
+
+    private final PaymentAnalyticService service;
+
+    public PaymentAnalyticComponent(PaymentAnalyticService service) {
+        this.service = service;
+    }
+
+    public void execute() {
+        // Пример фильтрации и сортировки
+        Specification<PaymentAnalyticEntity> specification = (root, query, cb) -> cb.equal(root.get(PaymentAnalyticEntity_.status), "APPROVED");
+
+        Page<PaymentAnalyticEntity> page = service.getFilteredAndSortedData(specification, PageRequest.of(0, 10));
+
+        page.forEach(entity -> {
+            System.out.println("Entity: " + entity.getId());
+        });
+
+        // Пример подсчета по группам
+        Map<RegistryCountEnum, List<Pair<String, Long>>> groupCounts = service.getCountByGroups(RegistryCountEnum.STATUS_COUNT, specification);
+
+        groupCounts.forEach((key, value) -> {
+            System.out.println("Group: " + key);
+            value.forEach(pair -> System.out.println(pair.getFirst() + " -> " + pair.getSecond()));
+        });
+    }
+}
+```
+
+---
+
+#### 4. **Улучшение с Использованием Метасущностей Hibernate**
+
+Обновленные спецификации и подсчет через `FieldMappingRegistry`:
+
+```java
+import jakarta.persistence.criteria.*;
+import org.springframework.data.jpa.domain.Specification;
+
+import java.util.List;
+
+public class PaymentAnalyticSpecifications {
+
+    public static Specification<PaymentAnalyticEntity> filterByStatus(String status) {
+        return (root, query, cb) -> cb.equal(root.get(PaymentAnalyticEntity_.status), status);
+    }
+
+    public static Specification<PaymentAnalyticEntity> filterByDateRange(String dateFrom, String dateTo) {
+        return (root, query, cb) -> cb.between(
+                root.get(PaymentAnalyticEntity_.date),
+                cb.literal(dateFrom),
+                cb.literal(dateTo)
+        );
+    }
+
+    public static Specification<PaymentAnalyticEntity> filterByAmountRange(Double amountFrom, Double amountTo) {
+        return (root, query, cb) -> cb.between(
+                root.get(PaymentAnalyticEntity_.amount),
+                cb.literal(amountFrom),
+                cb.literal(amountTo)
+        );
+    }
+
+    public static Specification<PaymentAnalyticEntity> applyDynamicFilters(List<Specification<PaymentAnalyticEntity>> filters) {
+        return filters.stream().reduce(Specification::and).orElse(null);
+    }
+}
+```
+
+---
+
+### Преимущества Подхода
+
+1. **Использование Метасущностей Hibernate:**
+   Метасущности Hibernate (e.g., `PaymentAnalyticEntity_`) обеспечивают безопасное обращение к полям сущностей, исключая ошибки на уровне компиляции.
+
+2. **Переиспользование JpaSpecificationExecutor:**
+   Стандартные возможности JPA репозитория позволяют сократить объем кода, реализуя фильтрацию и сортировку через спецификации.
+
+3. **Универсальный API для Подсчета:**
+   Использование `GroupCountService` предоставляет мощный инструмент для группировки и подсчета данных, легко расширяемый для новых уровней вложенности.
+
+4. **Простота Интеграции:**
+   Методы репозитория остаются стандартными, что упрощает интеграцию с другими слоями приложения.
