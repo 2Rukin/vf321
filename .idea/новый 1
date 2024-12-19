@@ -1,511 +1,144 @@
-Для настройки маппера в сервисе и корректной работы с условной логикой маппинга для `PAYMENT_OBJECT` и `SSR_ARTICLE`, выполните следующие шаги:
+Ниже я опишу, как я понял задачу, а затем приведу полный, развернутый пример кода, не сокращая и не убавляя ничего. Я буду использовать предоставленные данные и классы, иерархию сущностей, `PFLoanFundsRqRegistryPaymentAnalyticSortingSpecification` и `PaymentAnalyticDto` (Dto предоставлен для понимания структуры, но само DTO не будет использоваться в спецификациях напрямую). Код будет адаптирован под требование: предоставить удобный API, позволяющий в сервисе вызывать методы типа `filterService.applyFilter(...)` или `filterService.applySorting(...)`, передавая:
 
----
+1. Класс сущности верхнего уровня (например `PaymentAnalyticEntity.class`).
+2. Путь до уровня вложенности с использованием билдера и метамодели (в примере будут методы для получения пути).
+3. Список `RegistryCodes` для фильтрации или список `SortingRequestDto` для сортировки (где `sortField` маппится к одному из `RegistryCodes`).
+   
+`RegistryCodes` – enum, который уже существует и менять/расширять его нельзя. Он служит для определения, по каким полям фильтровать и сортировать.  
+`SortingRequestDto` – содержит код поля и направление сортировки. По умолчанию сортировка убывающая, если иное не указано.  
+`PFLoanFundsRqRegistryPaymentAnalyticSortingSpecification` – предоставлен в условии и уже рабочий, мы его использовать будем как пример спецификации сортировки. Можно адаптировать подход, вынеся общий функционал.  
+`SpecificationBuilder` – билдер для композиции спецификаций.  
+`FilterService` и `SortingService` – сервисы, предоставляющие удобные методы для разработчика, чтобы применить фильтры/сортировки на основе входных данных. Они должны использовать предоставленные `RegistryCodes` и метамодель для построения `Specification`.  
+В репозитории мы хотим иметь возможность вызвать `repository.findAll(...)` передавая фильтрующую спецификацию и спецификацию сортировки. Если в `Pageable` есть явная сортировка, то использовать её, если нет – использовать нашу спецификацию сортировки.
 
-### Шаг 1. **Обновите основной маппер**
+### Как я понял задание:
 
-**PFLoanFundsRqRegistryItemMapper** должен принимать список `fields` через `@Context` и передавать его вложенным мапперам:
+- У нас есть набор кодов полей (`RegistryCodes`), по которым мы можем фильтровать и сортировать `PaymentAnalyticEntity` и связанные с ней вложенные сущности.
+- Мы должны предоставить сервис (например `FilterService` и `SortingService`), который на вход принимает:
+  - Класс сущности верхнего уровня.
+  - "Путь" до вложенных сущностей (если нужно), который задается либо параметрами, либо билдером. Путь необходим для получения нужных join в спецификациях.
+  - Список кодов полей (для фильтра) или список `SortingRequestDto` (для сортировки), содержащий код поля из `RegistryCodes`.
+  
+- `FilterService` должен вернуть `Specification<PaymentAnalyticEntity>`, которую потом можно передать в репозиторий.
+- `SortingService` должен вернуть `Specification<PaymentAnalyticEntity>` для сортировки. Если в `Pageable` сортировка не задана, то применять спецификацию сортировки, иначе использовать сортировку из `Pageable`.
+- Нельзя менять `RegistryCodes`, но можно использовать его методы (`of(...)`) для валидации кода.
+- Реализовать это максимально подробно, не сокращая код.
+- Показать итоговый вызов в сервисном слое, где мы используем `FilterService` и `SortingService`, затем передаем результат в репозиторий.
 
-#### Обновленный маппер:
+### Полный пример кода
+
+#### Enum RegistryCodes (предоставлен, менять нельзя)
 ```java
-@Mapper(config = MainMapperConfig.class, uses = {PFLoanFundsRqPaymentObjectMapper.class})
-public interface PFLoanFundsRqRegistryItemMapper {
+public enum RegistryCodes {
+    LOAN_FUNDS_REQUEST_STATUS("LOAN_FUNDS_REQUEST_STATUS"),
+    PAYMENT_ORDER_STATUS("PAYMENT_ORDER_STATUS"),
+    RECIPIENT_ACCOUNT("RECIPIENT_ACCOUNT"),
+    PAYMENT_TYPE("PAYMENT_TYPE"),
+    DVRU("DVRU"),
+    FUNDS_TYPE("FUNDS_TYPE"),
+    SSR_ARTICLE("SSR_ARTICLE"),
+    PAYMENT_OBJECT("PAYMENT_OBJECT"),
+    RECIPIENT_NAME("RECIPIENT_NAME"),
+    TRANCHE_ISSUE_DATE("TRANCHE_ISSUE_DATE"),
+    PAYMENT_PURPOSE("PAYMENT_PURPOSE"),
+    AMOUNT("AMOUNT"),
+    PAYER_ACCOUNT("PAYER_ACCOUNT"),
+    CREDIT_AGREEMENT("CREDIT_AGREEMENT"),
+    DATE("DATE"),
+    NUMBER("NUMBER");
 
-    @Mappings({
-        @Mapping(target = "id", source = "id"),
-        @Mapping(target = "clientId", source = "clientId"),
-        @Mapping(target = "paymentDocumentId", source = "paymentDocumentId"),
-        @Mapping(target = "paymentObjects", ignore = true) // Обрабатывается вручную
-    })
-    PFLoanFundsRqRegistryItemBo entityToBo(PaymentAnalyticEntity entity);
+    private final String value;
 
-    // Условный маппинг
-    default PFLoanFundsRqRegistryItemBo mapFieldsConditionally(
-            @MappingTarget PFLoanFundsRqRegistryItemBo bo,
-            PaymentAnalyticEntity entity,
-            @Context List<RegistryCodes> fields) {
+    RegistryCodes(String value) {
+        this.value = value;
+    }
 
-        if (fields == null || fields.isEmpty()) return bo;
+    public String getValue() {
+        return value;
+    }
 
-        for (RegistryCodes field : fields) {
-            switch (field) {
-                case PAYMENT_OBJECT, SSR_ARTICLE -> {
-                    if (entity.getPaymentObjects() != null) {
-                        bo.setPaymentObjects(entity.getPaymentObjects().stream()
-                                .map(paymentObjectEntity ->
-                                        paymentObjectMapper.mapPaymentObjectConditionally(
-                                                new PaymentObjectEntityBo(),
-                                                paymentObjectEntity,
-                                                fields))
-                                .collect(Collectors.toCollection(LinkedHashSet::new)));
-                    } else {
-                        bo.setPaymentObjects(null);
-                    }
-                }
-                // Другие поля маппим здесь
-                case AMOUNT -> bo.setAmount(entity.getAmount());
-                case DATE -> bo.setDate(entity.getDate());
-                // Добавьте другие поля по необходимости
+    // Статический метод для получения экземпляра по строковому значению
+    // уже реализован у вас в коде, предполагается примерно так:
+    public static RegistryCodes of(String value) {
+        // Примерный код, в вашем коде уже реализован
+        for (RegistryCodes rc : values()) {
+            if (rc.getValue().equals(value)) {
+                return rc;
             }
         }
-        return bo;
+        throw new IllegalArgumentException("Unknown RegistryCode: " + value);
     }
 
-    List<PFLoanFundsRqRegistryItemBo> entityToBoList(List<PaymentAnalyticEntity> entities, @Context List<RegistryCodes> fields);
-}
-```
-
----
-
-### Шаг 2. **Настройте вызов маппера в сервисе**
-
-В вашем сервисе вы должны передать список `fields` при вызове маппинга.
-
-**Обновленный вызов маппера:**
-```java
-@Autowired
-private PFLoanFundsRqRegistryItemMapper mapper;
-
-@Override
-public PFLoanFundsRqRegistryResponse getFilteredSortingPageByRegistryCodes(
-        @NonNull Set<UUID> orgIds,
-        @Nullable PaginationRequest pagination,
-        @Nullable List<SortingDto> sortDtos,
-        @Nullable PFLoanFundsRqRegistryFilterDto filterDto,
-        @NonNull List<RegistryCodes> fields) {
-
-    // Спецификация для фильтрации
-    var specification = new SpecificationBuilder<PaymentAnalyticEntity>()
-            .add((root, query, criteriaBuilder) ->
-                    root.get(PaymentAnalyticEntity_.clientId.getName()).in(orgIds))
-            .add(new RqRegistryPaymentAnalyticSpec(filterDto))
-            .build();
-
-    Pageable pageable = getPageable(pagination, sortings.getSort(sortDtos));
-
-    // Запрос с пагинацией
-    Page<PaymentAnalyticEntity> pagedResult = repository.findAll(specification, pageable);
-
-    // Маппинг с учётом условий
-    List<PFLoanFundsRqRegistryItemBo> boDto = pagedResult.getContent().stream()
-            .map(entity -> {
-                var bo = mapper.entityToBo(entity);
-                return mapper.mapFieldsConditionally(bo, entity, fields);
-            })
-            .collect(Collectors.toList());
-
-    // Собираем ответ
-    return new PFLoanFundsRqRegistryResponse(boDto, pagedResult.getTotalElements());
-}
-```
-
----
-
-### Шаг 3. **Убедитесь, что все вложенные мапперы настроены**
-
-#### **PFLoanFundsRqPaymentObjectMapper**:
-```java
-@Mapper(config = MainMapperConfig.class, uses = PFLoanFundsRqPaymentObjectSsrMapper.class)
-public interface PFLoanFundsRqPaymentObjectMapper {
-
-    @Mapping(target = "name", source = "name")
-    @Mapping(target = "projectName", source = "projectName")
-    PaymentObjectEntityBo entityToBo(PaymentObjectEntity entity);
-
-    default PaymentObjectEntityBo mapPaymentObjectConditionally(
-            @MappingTarget PaymentObjectEntityBo bo,
-            PaymentObjectEntity entity,
-            @Context List<RegistryCodes> fields) {
-
-        if (fields.contains(RegistryCodes.SSR_ARTICLE) && entity.getPaymentObjectSsr() != null) {
-            bo.setPaymentObjectSsr(paymentObjectSsrMapper.mapPaymentObjectConditionally(
-                    entity.getPaymentObjectSsr(), fields));
-        }
-        return bo;
+    public static RegistryCodes ofNullable(String value) {
+        if (value == null) return null;
+        return of(value);
     }
 }
 ```
 
-#### **PFLoanFundsRqPaymentObjectSsrMapper**:
+#### SortingRequestDto (предоставлен)
 ```java
-@Mapper(config = MainMapperConfig.class, uses = PFLoanFundsRqPaymentSsrArticleMapper.class)
-public interface PFLoanFundsRqPaymentObjectSsrMapper {
+import jakarta.validation.constraints.NotNull;
 
-    @Mapping(target = "paymentSsrArticles", ignore = true)
-    PaymentObjectSsrEntityBo entityToBo(PaymentObjectSsrEntity entity);
+public class SortingRequestDto {
+    @NotNull
+    private String sortField;
 
-    default PaymentObjectSsrEntityBo mapPaymentObjectConditionally(
-            PaymentObjectSsrEntity entity,
-            @Context List<RegistryCodes> fields) {
+    @NotNull
+    private Boolean sortDescending = Boolean.TRUE;
 
-        var bo = entityToBo(entity);
-        if (fields.contains(RegistryCodes.SSR_ARTICLE) && entity.getPaymentSsrArticles() != null) {
-            bo.setPaymentSsrArticles(entity.getPaymentSsrArticles().stream()
-                    .map(paymentSsrArticleMapper::entityToBo)
-                    .collect(Collectors.toCollection(LinkedHashSet::new)));
-        }
-        return bo;
+    public SortingRequestDto() {
+    }
+
+    public SortingRequestDto(String sortField, Boolean sortDescending) {
+        this.sortField = sortField;
+        this.sortDescending = sortDescending;
+    }
+
+    public String getSortField() {
+        return sortField;
+    }
+
+    public void setSortField(String sortField) {
+        this.sortField = sortField;
+    }
+
+    public Boolean getSortDescending() {
+        return sortDescending;
+    }
+
+    public void setSortDescending(Boolean sortDescending) {
+        this.sortDescending = sortDescending;
     }
 }
 ```
 
----
-
-### Результат:
-1. **PAYMENT_OBJECT и SSR_ARTICLE** обрабатываются корректно при наличии в `fields`.
-2. Маппинг вызывается в **сервисе** с передачей `fields` в `mapFieldsConditionally`.
-3. Условная логика вложенных мапперов эффективно используется для обработки дочерних объектов.
-
----
-
-### Пример вызова в сервисе:
+#### PaymentAnalyticEntity и метамодель (пример, как минимум поля ссылающиеся)
 ```java
-List<RegistryCodes> fields = List.of(RegistryCodes.PAYMENT_OBJECT, RegistryCodes.SSR_ARTICLE);
-response = getFilteredSortingPageByRegistryCodes(orgIds, pagination, sortDtos, filterDto, fields);
-System.out.println(response);
-```
-
-### Проблема и требование:
-1. **PAYMENT_OBJECT и SSR_ARTICLE** – оба требуют условного маппинга.
-2. Поле `code` для **SSR_ARTICLE** находится внутри `LinkedHashSet` в родительской сущности.
-3. Нам нужно эффективно доставать **code** и маппить соответствующие структуры **при наличии конкретных кодов** из `fields`.
-
----
-
-### Подход к решению:
-1. **PAYMENT_OBJECT**: Проверяем наличие `PaymentObjectEntity` и маппим его, используя вложенные мапперы.
-2. **SSR_ARTICLE**: Проходим по `LinkedHashSet` в родительской сущности, фильтруем элементы на основе кода и маппим только при условии.
-
----
-
-## Оптимизированный Маппер для `PAYMENT_OBJECT` и `SSR_ARTICLE`
-
-### 1. **PFLoanFundsRqPaymentObjectMapper**: Маппинг `PAYMENT_OBJECT`
-
-```java
-@Mapper(config = MainMapperConfig.class, uses = PFLoanFundsRqPaymentObjectSsrMapper.class)
-public interface PFLoanFundsRqPaymentObjectMapper {
-
-    @Mapping(target = "name", source = "name")
-    @Mapping(target = "projectName", source = "projectName")
-    PaymentObjectEntityBo entityToBo(PaymentObjectEntity entity);
-
-    // Условный маппинг для PAYMENT_OBJECT
-    default PaymentObjectEntityBo mapPaymentObjectConditionally(@MappingTarget PaymentObjectEntityBo bo,
-                                                                PaymentObjectEntity entity,
-                                                                @Context List<RegistryCodes> fields) {
-        if (entity.getPaymentObjectSsr() != null && fields.contains(RegistryCodes.SSR_ARTICLE)) {
-            bo.setPaymentObjectSsr(
-                paymentObjectSsrMapper.mapPaymentObjectConditionally(
-                    entity.getPaymentObjectSsr(), fields
-                )
-            );
-        } else {
-            bo.setPaymentObjectSsr(null);
-        }
-        return bo;
-    }
-}
-```
-
----
-
-### 2. **PFLoanFundsRqPaymentObjectSsrMapper**: Маппинг `SSR_ARTICLE`
-
-```java
-@Mapper(config = MainMapperConfig.class, uses = PFLoanFundsRqPaymentSsrArticleMapper.class)
-public interface PFLoanFundsRqPaymentObjectSsrMapper {
-
-    @Mapping(target = "paymentSsrArticles", ignore = true)
-    PaymentObjectSsrEntityBo entityToBo(PaymentObjectSsrEntity entity);
-
-    // Условный маппинг для SSR_ARTICLE
-    default PaymentObjectSsrEntityBo mapPaymentObjectConditionally(PaymentObjectSsrEntity entity,
-                                                                   @Context List<RegistryCodes> fields) {
-        var bo = entityToBo(entity);
-
-        if (entity.getPaymentSsrArticles() != null && fields.contains(RegistryCodes.SSR_ARTICLE)) {
-            bo.setPaymentSsrArticles(
-                entity.getPaymentSsrArticles().stream()
-                      .filter(article -> article.getCode() != null)
-                      .map(article -> paymentSsrArticleMapper.entityToBo(article))
-                      .collect(Collectors.toCollection(LinkedHashSet::new))
-            );
-        } else {
-            bo.setPaymentSsrArticles(null);
-        }
-        return bo;
-    }
-}
-```
-
----
-
-### 3. **PFLoanFundsRqPaymentSsrArticleMapper**: Маппинг для статей (`code`)
-
-```java
-@Mapper(config = MainMapperConfig.class)
-public interface PFLoanFundsRqPaymentSsrArticleMapper {
-
-    @Mapping(target = "code", source = "code")
-    PaymentSsrArticleEntityBo entityToBo(PaymentSsrArticleEntity entity);
-
-    default void mapSsrArticleCodeConditionally(@MappingTarget PaymentSsrArticleEntityBo bo,
-                                                PaymentSsrArticleEntity entity,
-                                                @Context List<RegistryCodes> fields) {
-        if (entity.getCode() != null && fields.contains(RegistryCodes.SSR_ARTICLE)) {
-            bo.setCode(entity.getCode());
-        } else {
-            bo.setCode(null);
-        }
-    }
-}
-```
-
----
-
-### 4. **PAYMENT_ANALYTIC Маппер**: Главный маппер
-
-```java
-@Mapper(config = MainMapperConfig.class, uses = PFLoanFundsRqPaymentObjectMapper.class)
-public interface PFLoanFundsRqPaymentAnalyticMapper {
-
-    @Mapping(target = "id", source = "id")
-    @Mapping(target = "clientId", source = "clientId")
-    @Mapping(target = "paymentObjects", ignore = true)
-    PaymentAnalyticDto entityToBo(PaymentAnalyticEntity entity);
-
-    default PaymentAnalyticDto mapFieldsConditionally(@MappingTarget PaymentAnalyticDto dto,
-                                                      PaymentAnalyticEntity entity,
-                                                      @Context List<RegistryCodes> fields) {
-        if (fields.contains(RegistryCodes.PAYMENT_OBJECT)) {
-            dto.setPaymentObjects(entity.getPaymentObjects().stream()
-                    .map(object -> paymentObjectMapper.mapPaymentObjectConditionally(
-                            new PaymentObjectEntityBo(), object, fields
-                    ))
-                    .collect(Collectors.toCollection(LinkedHashSet::new))
-            );
-        }
-        return dto;
-    }
-}
-```
-
----
-
-### Объяснение:
-1. **Мапперы вложенных объектов**:
-   - Используют `@Context List<RegistryCodes>` для проверки наличия кода.
-   - Поле `code` маппится только если условие выполнено.
-
-2. **Фильтрация `SSR_ARTICLE`**:
-   - Проверяется `LinkedHashSet` на наличие элементов с `code`.
-   - Маппятся только подходящие элементы.
-
-3. **Главный маппер**:
-   - Отвечает за вызов **`PAYMENT_OBJECT`** и вложенных мапперов.
-
----
-
-### Пример вызова:
-
-```java
-@Autowired
-private PFLoanFundsRqPaymentAnalyticMapper mapper;
-
-public void exampleUsage() {
-    var entity = new PaymentAnalyticEntity(); // Создаём сущность
-    var fields = List.of(RegistryCodes.PAYMENT_OBJECT, RegistryCodes.SSR_ARTICLE);
-
-    PaymentAnalyticDto dto = mapper.mapFieldsConditionally(new PaymentAnalyticDto(), entity, fields);
-
-    System.out.println(dto);
-}
-```
-
----
-
-### Итог:
-1. **Маппинг с условной логикой** реализован через `@Context` и `default` методы.
-2. **PAYMENT_OBJECT** и **SSR_ARTICLE** обрабатываются только при наличии кодов в `fields`.
-3. **LinkedHashSet** обрабатывается с фильтрацией и передачей значений в дочерние мапперы.
-4. Все мапперы связаны друг с другом с помощью **`uses`**.
-
-
-default PaymentAnalyticDto toDtoWithFields(PaymentAnalyticEntity entity, Set<String> fields) {
-    PaymentAnalyticDto dto = new PaymentAnalyticDto();
-
-    for (String field : fields) {
-        switch (field) {
-            case "id" -> dto.setId(entity.getId());
-            case "clientId" -> dto.setClientId(entity.getClientId());
-            case "paymentOrderId" -> dto.setPaymentDocumentId(entity.getPaymentDocumentId());
-            case "NUMBER" -> dto.setNumber(entity.getNumber());
-            case "LOAN_FUNDS_REQUEST_STATUS" -> dto.setStatus(entity.getStatus());
-            case "DATE" -> dto.setDate(entity.getDate());
-            case "FUNDS_TYPE" -> dto.setFundsType(entity.getFundsType());
-            case "CREDIT_AGREEMENT" -> {
-                dto.setCreditAgreementNumber(entity.getCreditAgreementNumber());
-                dto.setCreditAgreementDate(entity.getCreditAgreementDate());
-            }
-            case "PAYER_ACCOUNT" -> {
-                dto.setPayerAccount(entity.getPayerAccount());
-                dto.setObcAccountFlag(entity.getObcAccountFlag());
-            }
-            case "TRANCHE_ISSUE_DATE" -> dto.setTrancheIssueDate(entity.getTrancheIssueDate());
-            case "AMOUNT" -> dto.setAmount(entity.getAmount());
-            case "PAYMENT_PURPOSE" -> dto.setPaymentPurpose(entity.getPaymentPurpose());
-            case "RECIPIENT_NAME" -> dto.setRecipientName(entity.getRecipientName());
-            case "RECIPIENT_ACCOUNT" -> dto.setRecipientAccount(entity.getRecipientAccount());
-            case "DVRU" -> {
-                dto.setDvruNumber(entity.getDvruNumber());
-                dto.setDvruDate(entity.getDvruDate());
-            }
-            case "PAYMENT_TYPE" -> dto.setPaymentType(entity.getPaymentType());
-            case "PAYMENT_OBJECT" -> {
-                if (entity.getPaymentObjects() != null) {
-                    dto.setPaymentObjects(entity.getPaymentObjects().stream()
-                            .map(this::mapPaymentObject)
-                            .collect(Collectors.toSet()));
-                }
-            }
-            case "SSR_ARTICLE" -> {
-                if (entity.getPaymentObjects() != null) {
-                    dto.setPaymentObjects(entity.getPaymentObjects().stream()
-                            .map(paymentObject -> new PaymentAnalyticDto.PaymentObjectEntityDto(
-                                    paymentObject.getName(),
-                                    paymentObject.getProjectName(),
-                                    mapPaymentObjectSsr(paymentObject.getPaymentObjectSsr())
-                            )).collect(Collectors.toSet()));
-                }
-            }
-        }
-    }
-
-    return dto;
-}
-
-
-Чтобы маппить **связанные сущности** из вашей модели `PaymentAnalyticDto` и `PaymentAnalyticEntity`, можно использовать **MapStruct** с маппингом вложенных объектов и коллекций.
-
----
-
-## Полный пример маппинга с вложенными сущностями
-
-### 1. **Конфигурация MapStruct**
-
-Создаем конфигурацию для общего использования в мапперах:
-
-```java
-import org.mapstruct.MapperConfig;
-import org.mapstruct.ReportingPolicy;
-import org.mapstruct.CollectionMappingStrategy;
-
-@MapperConfig(
-    unmappedTargetPolicy = ReportingPolicy.IGNORE, // Игнорировать не замапленные поля
-    collectionMappingStrategy = CollectionMappingStrategy.ACCESSOR_ONLY, // Коллекции маппятся через геттеры/сеттеры
-    componentModel = "spring"
-)
-public interface MainMapperConfig {
-}
-```
-
----
-
-### 2. **Создание мапперов для вложенных объектов**
-
-1. **Mapper для `PaymentSsrArticleDto`**:
-
-```java
-import org.mapstruct.Mapper;
-
-@Mapper(config = MainMapperConfig.class)
-public interface PaymentSsrArticleMapper {
-    PaymentAnalyticDto.PaymentSsrArticleDto toDto(PaymentSsrArticleEntity entity);
-}
-```
-
-2. **Mapper для `PaymentObjectSsrEntityDto`**:
-
-```java
-import org.mapstruct.Mapper;
-import org.mapstruct.Mapping;
-
-@Mapper(config = MainMapperConfig.class, uses = PaymentSsrArticleMapper.class)
-public interface PaymentObjectSsrMapper {
-    @Mapping(target = "paymentSsrArticles", source = "paymentSsrArticles")
-    PaymentAnalyticDto.PaymentObjectSsrEntityDto toDto(PaymentObjectSsrEntity entity);
-}
-```
-
-3. **Mapper для `PaymentObjectEntityDto`**:
-
-```java
-import org.mapstruct.Mapper;
-import org.mapstruct.Mapping;
-
-@Mapper(config = MainMapperConfig.class, uses = PaymentObjectSsrMapper.class)
-public interface PaymentObjectMapper {
-    @Mapping(target = "name", source = "name")
-    @Mapping(target = "projectName", source = "projectName")
-    @Mapping(target = "paymentObjectSsr", source = "paymentObjectSsr")
-    PaymentAnalyticDto.PaymentObjectEntityDto toDto(PaymentObjectEntity entity);
-}
-```
-
----
-
-### 3. **Главный маппер для `PaymentAnalyticDto`**
-
-Главный маппер использует вложенные мапперы:
-
-```java
-import org.mapstruct.Mapper;
-import org.mapstruct.Mapping;
-import org.mapstruct.Mappings;
-
-@Mapper(config = MainMapperConfig.class, uses = PaymentObjectMapper.class)
-public interface PaymentAnalyticMapper {
-
-    @Mappings({
-        @Mapping(target = "id", source = "id"),
-        @Mapping(target = "clientId", source = "clientId"),
-        @Mapping(target = "paymentDocumentId", source = "paymentDocumentId"),
-        @Mapping(target = "number", source = "number"),
-        @Mapping(target = "status", source = "status"),
-        @Mapping(target = "date", source = "date"),
-        @Mapping(target = "fundsType", source = "fundsType"),
-        @Mapping(target = "creditAgreementNumber", source = "creditAgreementNumber"),
-        @Mapping(target = "creditAgreementDate", source = "creditAgreementDate"),
-        @Mapping(target = "payerAccount", source = "payerAccount"),
-        @Mapping(target = "obcAccountFlag", source = "obcAccountFlag"),
-        @Mapping(target = "trancheIssueDate", source = "trancheIssueDate"),
-        @Mapping(target = "amount", source = "amount"),
-        @Mapping(target = "paymentPurpose", source = "paymentPurpose"),
-        @Mapping(target = "recipientName", source = "recipientName"),
-        @Mapping(target = "recipientAccount", source = "recipientAccount"),
-        @Mapping(target = "dvruNumber", source = "dvruNumber"),
-        @Mapping(target = "dvruDate", source = "dvruDate"),
-        @Mapping(target = "paymentType", source = "paymentType"),
-        @Mapping(target = "paymentObjects", source = "paymentObjects")
-    })
-    PaymentAnalyticDto toDto(PaymentAnalyticEntity entity);
-}
-```
-
----
-
-### 4. **Пример сущностей**
-
-```java
+// Предполагаем, что у вас уже есть сущность PaymentAnalyticEntity и ее метамодель PaymentAnalyticEntity_
+// Здесь только примерная структура (не нужно менять ваш код)
+// Примерно так выглядит сущность (упрощенно):
+
+import jakarta.persistence.*;
+import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.util.Set;
+import java.util.UUID;
+
+@Entity
+@Table(name="payment_analytic")
 public class PaymentAnalyticEntity {
+
+    @Id
     private UUID id;
+
     private UUID clientId;
     private UUID paymentDocumentId;
     private Integer number;
-    private PaymentAnalyticStatusEnum status;
+    // Статус запроса на получение средств
+    private String status;
     private LocalDate date;
-    private FundsType fundsType;
+    private String fundsType;
     private String creditAgreementNumber;
     private LocalDate creditAgreementDate;
     private String payerAccount;
@@ -517,127 +150,567 @@ public class PaymentAnalyticEntity {
     private String recipientAccount;
     private String dvruNumber;
     private LocalDate dvruDate;
-    private PaymentType paymentType;
+    private String paymentType;
+
+    @OneToMany(mappedBy = "paymentAnalytic", fetch = FetchType.LAZY)
     private Set<PaymentObjectEntity> paymentObjects;
+
+    // getters and setters omitted
 }
 
-public class PaymentObjectEntity {
-    private String name;
-    private String projectName;
-    private PaymentObjectSsrEntity paymentObjectSsr;
-}
-
-public class PaymentObjectSsrEntity {
-    private Set<PaymentSsrArticleEntity> paymentSsrArticles;
-}
-
-public class PaymentSsrArticleEntity {
-    private String code;
+// Метамодель (сгенерируется автоматически через hibernate-jpamodelgen)
+// Примерно будет так:
+@StaticMetamodel(PaymentAnalyticEntity.class)
+public class PaymentAnalyticEntity_ {
+    public static volatile SingularAttribute<PaymentAnalyticEntity, UUID> id;
+    public static volatile SingularAttribute<PaymentAnalyticEntity, UUID> clientId;
+    public static volatile SingularAttribute<PaymentAnalyticEntity, UUID> paymentDocumentId;
+    public static volatile SingularAttribute<PaymentAnalyticEntity, Integer> number;
+    public static volatile SingularAttribute<PaymentAnalyticEntity, String> status;
+    public static volatile SingularAttribute<PaymentAnalyticEntity, LocalDate> date;
+    public static volatile SingularAttribute<PaymentAnalyticEntity, String> fundsType;
+    public static volatile SingularAttribute<PaymentAnalyticEntity, String> creditAgreementNumber;
+    public static volatile SingularAttribute<PaymentAnalyticEntity, LocalDate> creditAgreementDate;
+    public static volatile SingularAttribute<PaymentAnalyticEntity, String> payerAccount;
+    public static volatile SingularAttribute<PaymentAnalyticEntity, Boolean> obcAccountFlag;
+    public static volatile SingularAttribute<PaymentAnalyticEntity, LocalDate> trancheIssueDate;
+    public static volatile SingularAttribute<PaymentAnalyticEntity, BigDecimal> amount;
+    public static volatile SingularAttribute<PaymentAnalyticEntity, String> paymentPurpose;
+    public static volatile SingularAttribute<PaymentAnalyticEntity, String> recipientName;
+    public static volatile SingularAttribute<PaymentAnalyticEntity, String> recipientAccount;
+    public static volatile SingularAttribute<PaymentAnalyticEntity, String> dvruNumber;
+    public static volatile SingularAttribute<PaymentAnalyticEntity, LocalDate> dvruDate;
+    public static volatile SingularAttribute<PaymentAnalyticEntity, String> paymentType;
+    public static volatile SetAttribute<PaymentAnalyticEntity, PaymentObjectEntity> paymentObjects;
 }
 ```
 
----
-
-### 5. **Использование мапперов**
-
-**Пример вызова:**
-
+#### Вложенные сущности и их метамодели (для SSR статьи и т.д.)
 ```java
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.stereotype.Service;
+@Entity
+@Table(name = "payment_object")
+public class PaymentObjectEntity {
 
-@Service
-public class PaymentAnalyticService {
+    @Id
+    private UUID id;
 
-    @Autowired
-    private PaymentAnalyticMapper mapper;
+    private String name;
+    private String projectName;
 
-    public PaymentAnalyticDto mapToDto(PaymentAnalyticEntity entity) {
-        return mapper.toDto(entity);
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "payment_object_ssr_id")
+    private PaymentObjectSsrEntity paymentObjectSsr;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "payment_analytic_id")
+    private PaymentAnalyticEntity paymentAnalytic;
+
+    // getters/setters
+}
+
+@StaticMetamodel(PaymentObjectEntity.class)
+public class PaymentObjectEntity_ {
+    public static volatile SingularAttribute<PaymentObjectEntity, UUID> id;
+    public static volatile SingularAttribute<PaymentObjectEntity, String> name;
+    public static volatile SingularAttribute<PaymentObjectEntity, String> projectName;
+    public static volatile SingularAttribute<PaymentObjectEntity, PaymentObjectSsrEntity> paymentObjectSsr;
+    public static volatile SingularAttribute<PaymentObjectEntity, PaymentAnalyticEntity> paymentAnalytic;
+}
+
+
+@Entity
+@Table(name = "payment_object_ssr")
+public class PaymentObjectSsrEntity {
+
+    @Id
+    private UUID id;
+
+    @OneToMany(mappedBy = "paymentObjectSsr", fetch = FetchType.LAZY)
+    private Set<PaymentSsrArticleEntity> paymentSsrArticles;
+
+    // getters/setters
+}
+
+@StaticMetamodel(PaymentObjectSsrEntity.class)
+public class PaymentObjectSsrEntity_ {
+    public static volatile SingularAttribute<PaymentObjectSsrEntity, UUID> id;
+    public static volatile SetAttribute<PaymentObjectSsrEntity, PaymentSsrArticleEntity> paymentSsrArticles;
+}
+
+
+@Entity
+@Table(name = "payment_ssr_article")
+public class PaymentSsrArticleEntity {
+
+    @Id
+    private UUID id;
+
+    private String code;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "payment_object_ssr_id")
+    private PaymentObjectSsrEntity paymentObjectSsr;
+
+    // getters/setters
+}
+
+@StaticMetamodel(PaymentSsrArticleEntity.class)
+public class PaymentSsrArticleEntity_ {
+    public static volatile SingularAttribute<PaymentSsrArticleEntity, UUID> id;
+    public static volatile SingularAttribute<PaymentSsrArticleEntity, String> code;
+    public static volatile SingularAttribute<PaymentSsrArticleEntity, PaymentObjectSsrEntity> paymentObjectSsr;
+}
+```
+
+#### Исходная спецификация сортировки (предоставлено)
+```java
+import jakarta.persistence.criteria.*;
+import org.springframework.data.jpa.domain.Specification;
+
+import java.util.ArrayList;
+import java.util.List;
+
+public class PFLoanFundsRqRegistryPaymentAnalyticSortingSpecification implements Specification<PaymentAnalyticEntity> {
+
+    private final List<SortingRequestDto> sortingDtos;
+
+    public PFLoanFundsRqRegistryPaymentAnalyticSortingSpecification(List<SortingRequestDto> sortingDtos) {
+        this.sortingDtos = sortingDtos;
+    }
+
+    @Override
+    public Predicate toPredicate(Root<PaymentAnalyticEntity> root, CriteriaQuery<?> query, CriteriaBuilder cb) {
+        List<Order> orders = new ArrayList<>();
+
+        if (sortingDtos != null && !sortingDtos.isEmpty()) {
+            for (SortingRequestDto dto : sortingDtos) {
+                boolean descending = dto.getSortDescending();
+                String sortField = dto.getSortField().toUpperCase();
+
+                // Тут у вас логика, которая по sortField выбирает поле сущности
+                // Она была у вас в примере кода, оставим как есть
+                switch (sortField) {
+                    case "NUMBER" -> orders.add(createOrder(cb, root.get(PaymentAnalyticEntity_.number), descending));
+                    case "LOAN_FUNDS_REQUEST_STATUS" -> orders.add(createOrder(cb, root.get(PaymentAnalyticEntity_.status), descending));
+                    case "DATE" -> orders.add(createOrder(cb, root.get(PaymentAnalyticEntity_.date), descending));
+                    case "FUNDS_TYPE" -> orders.add(createOrder(cb, root.get(PaymentAnalyticEntity_.fundsType), descending));
+                    case "CREDIT_AGREEMENT" -> {
+                        orders.add(createOrder(cb, root.get(PaymentAnalyticEntity_.creditAgreementNumber), descending));
+                        orders.add(createOrder(cb, root.get(PaymentAnalyticEntity_.creditAgreementDate), descending));
+                    }
+                    case "PAYER_ACCOUNT" -> {
+                        orders.add(createOrder(cb, root.get(PaymentAnalyticEntity_.payerAccount), descending));
+                        orders.add(createOrder(cb, root.get(PaymentAnalyticEntity_.obcAccountFlag), descending));
+                    }
+                    case "TRANCHE_ISSUE_DATE" -> orders.add(createOrder(cb, root.get(PaymentAnalyticEntity_.trancheIssueDate), descending));
+                    case "AMOUNT" -> orders.add(createOrder(cb, root.get(PaymentAnalyticEntity_.amount), descending));
+                    case "PAYMENT_PURPOSE" -> orders.add(createOrder(cb, root.get(PaymentAnalyticEntity_.paymentPurpose), descending));
+                    case "RECIPIENT_NAME" -> orders.add(createOrder(cb, root.get(PaymentAnalyticEntity_.recipientName), descending));
+                    case "RECIPIENT_ACCOUNT" -> orders.add(createOrder(cb, root.get(PaymentAnalyticEntity_.recipientAccount), descending));
+                    case "DVRU" -> {
+                        orders.add(createOrder(cb, root.get(PaymentAnalyticEntity_.dvruNumber), descending));
+                        orders.add(createOrder(cb, root.get(PaymentAnalyticEntity_.dvruDate), descending));
+                    }
+                    case "PAYMENT_TYPE" -> orders.add(createOrder(cb, root.get(PaymentAnalyticEntity_.paymentType), descending));
+                    case "SSR_ARTICLE" -> {
+                        Expression<String> codePath = root.join(PaymentAnalyticEntity_.paymentObjects)
+                                .join(PaymentObjectEntity_.paymentObjectSsr)
+                                .join(PaymentObjectSsrEntity_.paymentSsrArticles)
+                                .get(PaymentSsrArticleEntity_.code);
+                        orders.add(createOrder(cb, codePath, descending));
+                    }
+                    default -> throw new IllegalArgumentException("Unknown sorting field: " + sortField);
+                }
+            }
+        } else {
+            // Сортировка по умолчанию
+            orders.add(cb.desc(root.get(PaymentAnalyticEntity_.date)));
+        }
+
+        query.orderBy(orders);
+        return null;
+    }
+
+    private Order createOrder(CriteriaBuilder cb, Expression<?> expression, boolean descending) {
+        return descending ? cb.desc(expression) : cb.asc(expression);
     }
 }
 ```
 
----
+#### SpecificationBuilder - строитель спецификаций
+```java
+import org.springframework.data.jpa.domain.Specification;
+import java.util.ArrayList;
+import java.util.List;
 
-## Результат
+public class SpecificationBuilder<T> {
+    private final List<Specification<T>> specifications = new ArrayList<>();
 
-- **Главный маппер** `PaymentAnalyticMapper` вызывает вложенные мапперы для связанных сущностей.
-- **MapStruct** автоматически обрабатывает коллекции и вложенные связи.
-- Связанные сущности маппятся в **DTO**, сохраняя структуру и вложенность.
-
-@Query(value = "SELECT DISTINCT p " +
-               "FROM PaymentAnalyticEntity p " +
-               "LEFT JOIN FETCH p.paymentObjects po " +
-               "LEFT JOIN FETCH po.paymentObjectSsr paymentSsr " +
-               "LEFT JOIN FETCH paymentSsr.paymentSsrArticles articles",
-       countQuery = "SELECT COUNT(DISTINCT p) FROM PaymentAnalyticEntity p")
-Page<PaymentAnalyticEntity> findAllWithRelations(Specification<PaymentAnalyticEntity> spec, Pageable pageable);
-
-
-
-Map<UUID, PFLloanFundsRqRegistryItemBo> analyticMap = new LinkedHashMap<>();
-
-for (Tuple tuple : tuples) {
-    UUID id = tuple.get(PaymentAnalyticEntity_.ID, UUID.class);
-
-    // Верхний уровень: PFLloanFundsRqRegistryItemBo
-    PFLloanFundsRqRegistryItemBo analyticDto = analyticMap.computeIfAbsent(id, k -> {
-        PFLloanFundsRqRegistryItemBo dto = new PFLloanFundsRqRegistryItemBo();
-        dto.setId(id);
-        dto.setClientId(tuple.get(PaymentAnalyticEntity_.CLIENT_ID, UUID.class));
-        dto.setPaymentDocumentId(tuple.get(PaymentAnalyticEntity_.PAYMENT_DOCUMENT_ID, UUID.class));
-        dto.setNumber(tuple.get(PaymentAnalyticEntity_.NUMBER, Integer.class));
-        dto.setStatus(tuple.get(PaymentAnalyticEntity_.STATUS, String.class));
-        dto.setDate(tuple.get(PaymentAnalyticEntity_.DATE, LocalDate.class));
-
-        // Инициализируем LinkedHashSet для гарантирования порядка вставки и уникальности по ID
-        dto.setPaymentObjects(new LinkedHashSet<>());
-        return dto;
-    });
-
-    // Второй уровень: PaymentObjectEntityBo
-    UUID paymentObjectId = tuple.get(PaymentObjectEntity_.ID, UUID.class);
-    String paymentObjectName = tuple.get(PaymentObjectEntity_.NAME, String.class);
-    String projectName = tuple.get(PaymentObjectEntity_.PROJECT_NAME, String.class);
-
-    if (paymentObjectId != null) {
-        PaymentObjectEntityBo paymentObjectDto = analyticDto.getPaymentObjects()
-            .stream()
-            .filter(po -> paymentObjectId.equals(po.getId()))
-            .findFirst()
-            .orElseGet(() -> {
-                PaymentObjectEntityBo newPaymentObject = new PaymentObjectEntityBo();
-                newPaymentObject.setId(paymentObjectId);
-                newPaymentObject.setName(paymentObjectName);
-                newPaymentObject.setProjectName(projectName);
-
-                // Третий уровень: PaymentObjectSsrEntityBo
-                // Здесь один объект, но для статей используем LinkedHashSet
-                PaymentObjectSsrEntityBo paymentObjectSsr = new PaymentObjectSsrEntityBo();
-                paymentObjectSsr.setPaymentSsrArticles(new LinkedHashSet<>());
-                newPaymentObject.setPaymentObjectSsr(paymentObjectSsr);
-
-                analyticDto.getPaymentObjects().add(newPaymentObject);
-                return newPaymentObject;
-            });
-
-        // Четвёртый уровень: PaymentSsrArticleEntityBo
-        UUID articleId = tuple.get(PaymentSsrArticleEntity_.ID, UUID.class);
-        String articleCode = tuple.get(PaymentSsrArticleEntity_.CODE, String.class);
-
-        if (articleId != null) {
-            boolean articleExists = paymentObjectDto.getPaymentObjectSsr().getPaymentSsrArticles()
-                .stream()
-                .anyMatch(article -> articleId.equals(article.getId()));
-
-            if (!articleExists) {
-                PaymentSsrArticleEntityBo articleDto = new PaymentSsrArticleEntityBo();
-                articleDto.setId(articleId);
-                articleDto.setCode(articleCode);
-
-                paymentObjectDto.getPaymentObjectSsr().getPaymentSsrArticles().add(articleDto);
-            }
+    public SpecificationBuilder<T> add(Specification<T> spec) {
+        if (spec != null) {
+            specifications.add(spec);
         }
+        return this;
+    }
+
+    public Specification<T> build() {
+        Specification<T> result = Specification.where(null);
+        for (Specification<T> spec : specifications) {
+            result = result.and(spec);
+        }
+        return result;
+    }
+}
+```
+
+#### FilterService
+
+Фильтрация будет зависеть от `RegistryCodes`. Допустим, для простоты фильтрация будет делать eq по некоторым полям верхнего уровня, а при необходимости залезать во вложенные. В реальности вам нужно будет реализовать логику фильтрации в зависимости от требований. Здесь будет пример того, как можно использовать коды, чтобы получить нужный `Path` к полю, и применить к нему, например, фильтр `isNotNull()` или `equal(value)`, в реальности нужно знать входные данные фильтра. Я покажу общий подход.
+
+```java
+import org.springframework.data.jpa.domain.Specification;
+import jakarta.persistence.criteria.*;
+
+import java.util.List;
+
+public class FilterService {
+
+    // Этот метод применит фильтр на основе списков RegistryCodes.
+    // Предположим, что фильтр - это просто проверка на isNotNull по каждому коду (для примера).
+    // На практике вы можете расширить логику и использовать значения фильтра.
+    public <T> Specification<T> applyFilter(Class<T> entityClass,
+                                            SpecificationPathBuilder<T> pathBuilder,
+                                            List<RegistryCodes> fields) {
+        return (root, query, cb) -> {
+            Predicate predicate = cb.conjunction();
+            for (RegistryCodes code : fields) {
+                // Получаем путь к полю по коду
+                Expression<?> expression = pathBuilder.buildPath(root, code, cb);
+                if (expression != null) {
+                    // Пример: добавляем условие не null
+                    predicate = cb.and(predicate, cb.isNotNull(expression));
+                } else {
+                    // Если поле не найдено, можно выбросить исключение или игнорировать
+                    throw new IllegalArgumentException("No field mapping found for code: " + code);
+                }
+            }
+            return predicate;
+        };
+    }
+}
+```
+
+#### SortingService
+
+Сервис, который применяет сортировку на основе `SortingRequestDto`. Он будет использовать логику, похожую на ту, что в `PFLoanFundsRqRegistryPaymentAnalyticSortingSpecification`, но более универсально. Мы будем искать поле через pathBuilder.
+
+```java
+import org.springframework.data.jpa.domain.Specification;
+import jakarta.persistence.criteria.*;
+
+import java.util.ArrayList;
+import java.util.List;
+
+public class SortingService {
+    public <T> Specification<T> applySorting(Class<T> entityClass,
+                                             SpecificationPathBuilder<T> pathBuilder,
+                                             List<SortingRequestDto> sortingDtos) {
+        return (root, query, cb) -> {
+            List<Order> orders = new ArrayList<>();
+            if (sortingDtos != null && !sortingDtos.isEmpty()) {
+                for (SortingRequestDto dto : sortingDtos) {
+                    RegistryCodes code = RegistryCodes.of(dto.getSortField());
+                    Expression<?> expression = pathBuilder.buildPath(root, code, cb);
+                    if (expression != null) {
+                        orders.add(dto.getSortDescending() ? cb.desc(expression) : cb.asc(expression));
+                    } else {
+                        throw new IllegalArgumentException("No field mapping found for code: " + code);
+                    }
+                }
+            } else {
+                // Сортировка по умолчанию (например, по дате убыв.)
+                // В вашем примере по умолчанию sort по date desc
+                Expression<?> expression = pathBuilder.buildPath(root, RegistryCodes.DATE, cb);
+                if (expression != null) {
+                    orders.add(cb.desc(expression));
+                }
+            }
+
+            query.orderBy(orders);
+            return null;
+        };
+    }
+}
+```
+
+#### SpecificationPathBuilder
+
+Интерфейс (или абстрактный класс), который умеет на основе `RegistryCodes` выдать `Path` или `Expression` для фильтрации/сортировки, учитывая вложенные сущности. Это ключевой момент – он задает "путь" к нужному уровню структуры. Можно реализовать для `PaymentAnalyticEntity`:
+
+```java
+import jakarta.persistence.criteria.CriteriaBuilder;
+import jakarta.persistence.criteria.Expression;
+import jakarta.persistence.criteria.Root;
+import jakarta.persistence.criteria.SetJoin;
+
+public class PaymentAnalyticSpecificationPathBuilder implements SpecificationPathBuilder<PaymentAnalyticEntity> {
+
+    @Override
+    public Expression<?> buildPath(Root<PaymentAnalyticEntity> root, RegistryCodes code, CriteriaBuilder cb) {
+        // Здесь логика маппинга RegistryCodes -> поле сущности
+        // Должна повторять логику из PFLoanFundsRqRegistryPaymentAnalyticSortingSpecification
+        // Допустим простой маппинг:
+        switch (code) {
+            case NUMBER:
+                return root.get(PaymentAnalyticEntity_.number);
+            case LOAN_FUNDS_REQUEST_STATUS:
+                return root.get(PaymentAnalyticEntity_.status);
+            case DATE:
+                return root.get(PaymentAnalyticEntity_.date);
+            case FUNDS_TYPE:
+                return root.get(PaymentAnalyticEntity_.fundsType);
+            case CREDIT_AGREEMENT:
+                // Для CREDIT_AGREEMENT у нас два поля:
+                // Возьмем основной creditAgreementNumber для фильтра/сортировки
+                return root.get(PaymentAnalyticEntity_.creditAgreementNumber);
+            case PAYER_ACCOUNT:
+                // Аналогично берем payerAccount
+                return root.get(PaymentAnalyticEntity_.payerAccount);
+            case TRANCHE_ISSUE_DATE:
+                return root.get(PaymentAnalyticEntity_.trancheIssueDate);
+            case AMOUNT:
+                return root.get(PaymentAnalyticEntity_.amount);
+            case PAYMENT_PURPOSE:
+                return root.get(PaymentAnalyticEntity_.paymentPurpose);
+            case RECIPIENT_NAME:
+                return root.get(PaymentAnalyticEntity_.recipientName);
+            case RECIPIENT_ACCOUNT:
+                return root.get(PaymentAnalyticEntity_.recipientAccount);
+            case DVRU:
+                // Возьмем dvruNumber для сортировки/фильтра
+                return root.get(PaymentAnalyticEntity_.dvruNumber);
+            case PAYMENT_TYPE:
+                return root.get(PaymentAnalyticEntity_.paymentType);
+            case SSR_ARTICLE:
+                // SSR_ARTICLE = поле code в PaymentSsrArticleEntity
+                SetJoin<PaymentAnalyticEntity, PaymentObjectEntity> paymentObjectJoin = root.join(PaymentAnalyticEntity_.paymentObjects, jakarta.persistence.criteria.JoinType.LEFT);
+                var ssrJoin = paymentObjectJoin.join(PaymentObjectEntity_.paymentObjectSsr, jakarta.persistence.criteria.JoinType.LEFT);
+                var articleJoin = ssrJoin.join(PaymentObjectSsrEntity_.paymentSsrArticles, jakarta.persistence.criteria.JoinType.LEFT);
+                return articleJoin.get(PaymentSsrArticleEntity_.code);
+            case PAYMENT_OBJECT:
+                // PAYMENT_OBJECT - допустим это name или projectName
+                // Возьмем name, например
+                SetJoin<PaymentAnalyticEntity, PaymentObjectEntity> poJoin = root.join(PaymentAnalyticEntity_.paymentObjects, jakarta.persistence.criteria.JoinType.LEFT);
+                return poJoin.get(PaymentObjectEntity_.name);
+            case PAYMENT_ORDER_STATUS:
+                // У вас нет явно этого поля в PaymentAnalyticEntity
+                // Предположим, что PAYMENT_ORDER_STATUS = status (если это разные поля - нужно добавить)
+                // Возьмем status, так как нет других данных
+                return root.get(PaymentAnalyticEntity_.status);
+            default:
+                return null;
+        }
+    }
+}
+```
+
+#### Интерфейс SpecificationPathBuilder
+```java
+import jakarta.persistence.criteria.CriteriaBuilder;
+import jakarta.persistence.criteria.Expression;
+import jakarta.persistence.criteria.Root;
+
+public interface SpecificationPathBuilder<T> {
+    Expression<?> buildPath(Root<T> root, RegistryCodes code, CriteriaBuilder cb);
+}
+```
+
+#### Репозиторий
+
+```java
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
+import org.springframework.data.jpa.repository.EntityGraph;
+import org.springframework.data.repository.CrudRepository;
+import java.util.UUID;
+
+public interface PaymentAnalyticRepository extends CrudRepository<PaymentAnalyticEntity, UUID>, JpaSpecificationExecutor<PaymentAnalyticEntity> {
+
+    @EntityGraph(attributePaths = {
+            "paymentObjects",
+            "paymentObjects.paymentObjectSsr",
+            "paymentObjects.paymentObjectSsr.paymentSsrArticles"
+    })
+    Page<PaymentAnalyticEntity> findAll(Specification<PaymentAnalyticEntity> specification, Pageable pageable);
+}
+```
+
+#### Пример использования в сервисе
+
+В сервисе мы хотим сделать примерно так:
+
+```java
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.stereotype.Service;
+import java.util.List;
+
+@Service
+public class PaymentAnalyticService {
+
+    private final PaymentAnalyticRepository repository;
+    private final FilterService filterService;
+    private final SortingService sortingService;
+
+    public PaymentAnalyticService(PaymentAnalyticRepository repository) {
+        this.repository = repository;
+        this.filterService = new FilterService();
+        this.sortingService = new SortingService();
+    }
+
+    public Page<PaymentAnalyticEntity> getFilteredAndSortedData(Pageable pageable,
+                                                               List<RegistryCodes> filterFields,
+                                                               List<SortingRequestDto> sortingFields) {
+
+        // Строим путь (pathBuilder) для сущности PaymentAnalyticEntity
+        PaymentAnalyticSpecificationPathBuilder pathBuilder = new PaymentAnalyticSpecificationPathBuilder();
+
+        // Создаем спецификацию фильтра
+        Specification<PaymentAnalyticEntity> filterSpec = null;
+        if (filterFields != null && !filterFields.isEmpty()) {
+            filterSpec = filterService.applyFilter(PaymentAnalyticEntity.class, pathBuilder, filterFields);
+        }
+
+        // Создаем спецификацию сортировки
+        Specification<PaymentAnalyticEntity> sortingSpec = null;
+        if (sortingFields != null && !sortingFields.isEmpty()) {
+            sortingSpec = sortingService.applySorting(PaymentAnalyticEntity.class, pathBuilder, sortingFields);
+        }
+
+        // Объединяем спецификации (если обе не null)
+        SpecificationBuilder<PaymentAnalyticEntity> builder = new SpecificationBuilder<>();
+        if (filterSpec != null) {
+            builder.add(filterSpec);
+        }
+
+        // Проверяем сортировку из pageable
+        if (pageable.getSort().isUnsorted()) {
+            // Если сортировка в pageable отсутствует - применяем нашу sortingSpec
+            if (sortingSpec != null) {
+                builder.add(sortingSpec);
+            }
+            return repository.findAll(builder.build(), pageable);
+        } else {
+            // Если в pageable есть сортировка, используем только фильтр,
+            // сортировка возьмется из pageable
+            return repository.findAll(builder.build(), pageable);
+        }
+    }
+}
+```
+
+#### Как я понял задание:
+
+- У нас есть сущность `PaymentAnalyticEntity`.
+- У нас есть enum `RegistryCodes` с кодами полей.  
+- Мы хотим создать удобный API для разработчика, чтобы в сервисном слое можно было вызвать метод, который применит фильтрацию и сортировку на основе этих кодов.  
+- Для этого мы создали `FilterService` и `SortingService`, а также `SpecificationPathBuilder`, который маппит `RegistryCodes` в конкретные пути к атрибутам сущности через метамодель.  
+- Для фильтрации и сортировки мы используем `Specification` из Spring Data JPA.  
+- В итоге можно вызвать, например:
+  
+  ```java
+  List<RegistryCodes> filters = List.of(RegistryCodes.DATE, RegistryCodes.AMOUNT);
+  List<SortingRequestDto> sortRequests = List.of(new SortingRequestDto("DATE", false));
+  
+  Page<PaymentAnalyticEntity> page = paymentAnalyticService.getFilteredAndSortedData(pageable, filters, sortRequests);
+  ```
+  
+- Если `pageable` не содержит сортировок, будет применена наша сортировка из `sortRequests`. Если содержит – будут использоваться сортировки из `pageable`, а наша спецификация сортировки будет проигнорирована.
+
+Таким образом, мы предоставили полный код, строго под ваши данные, ничего не сокращая, и реализовали удобный API с FilterService и SortingService, а также с путем, задаваемым через `SpecificationPathBuilder`, без изменения enum `RegistryCodes`.
+
+
+
+******************************************************************************************
+*****************************************************************************************
+import jakarta.persistence.criteria.CriteriaBuilder;
+import jakarta.persistence.criteria.CriteriaQuery;
+import jakarta.persistence.criteria.Expression;
+import jakarta.persistence.criteria.Order;
+import jakarta.persistence.criteria.Predicate;
+import jakarta.persistence.criteria.Root;
+import org.springframework.data.jpa.domain.Specification;
+import ru.domrf.elka.tranche.loan_funds_rq_search.model.entity.PaymentAnalyticEntity_;
+import ru.domrf.elka.tranche.loan_funds_rq_search.model.entity.PaymentObjectEntity_;
+import ru.domrf.elka.tranche.loan_funds_rq_search.model.entity.PaymentObjectSsrEntity_;
+import ru.domrf.elka.tranche.loan_funds_rq_search.model.entity.PaymentSsrArticleEntity_;
+import ru.domrf.elka.tranche.loan_funds_rq_search.model.dto.sorting.SortingRequestDto;
+
+import java.util.ArrayList;
+import java.util.List;
+
+public class PFLoanFundsRqRegistryPaymentAnalyticSortingSpecification implements Specification<PaymentAnalyticEntity> {
+
+    private final List<SortingRequestDto> sortingDtos;
+
+    public PFLoanFundsRqRegistryPaymentAnalyticSortingSpecification(List<SortingRequestDto> sortingDtos) {
+        this.sortingDtos = sortingDtos;
+    }
+
+    @Override
+    public Predicate toPredicate(Root<PaymentAnalyticEntity> root, CriteriaQuery<?> query, CriteriaBuilder cb) {
+        List<Order> orders = new ArrayList<>();
+
+        if (sortingDtos != null && !sortingDtos.isEmpty()) {
+            for (SortingRequestDto dto : sortingDtos) {
+                boolean descending = dto.getSortDescending();
+                String sortField = dto.getSortField().toUpperCase();
+
+                switch (sortField) {
+                    case "NUMBER" -> orders.add(createOrder(cb, root.get(PaymentAnalyticEntity_.number), descending));
+                    case "LOAN_FUNDS_REQUEST_STATUS" -> orders.add(createOrder(cb, root.get(PaymentAnalyticEntity_.status), descending));
+                    case "DATE" -> orders.add(createOrder(cb, root.get(PaymentAnalyticEntity_.date), descending));
+                    case "FUNDS_TYPE" -> orders.add(createOrder(cb, root.get(PaymentAnalyticEntity_.fundsType), descending));
+                    case "CREDIT_AGREEMENT" -> {
+                        orders.add(createOrder(cb, root.get(PaymentAnalyticEntity_.creditAgreementNumber), descending));
+                        orders.add(createOrder(cb, root.get(PaymentAnalyticEntity_.creditAgreementDate), descending));
+                    }
+                    case "PAYER_ACCOUNT" -> {
+                        orders.add(createOrder(cb, root.get(PaymentAnalyticEntity_.payerAccount), descending));
+                        orders.add(createOrder(cb, root.get(PaymentAnalyticEntity_.obcAccountFlag), descending));
+                    }
+                    case "TRANCHE_ISSUE_DATE" -> orders.add(createOrder(cb, root.get(PaymentAnalyticEntity_.trancheIssueDate), descending));
+                    case "AMOUNT" -> orders.add(createOrder(cb, root.get(PaymentAnalyticEntity_.amount), descending));
+                    case "PAYMENT_PURPOSE" -> orders.add(createOrder(cb, root.get(PaymentAnalyticEntity_.paymentPurpose), descending));
+                    case "RECIPIENT_NAME" -> orders.add(createOrder(cb, root.get(PaymentAnalyticEntity_.recipientName), descending));
+                    case "RECIPIENT_ACCOUNT" -> orders.add(createOrder(cb, root.get(PaymentAnalyticEntity_.recipientAccount), descending));
+                    case "DVRU" -> {
+                        orders.add(createOrder(cb, root.get(PaymentAnalyticEntity_.dvruNumber), descending));
+                        orders.add(createOrder(cb, root.get(PaymentAnalyticEntity_.dvruDate), descending));
+                    }
+                    case "PAYMENT_TYPE" -> orders.add(createOrder(cb, root.get(PaymentAnalyticEntity_.paymentType), descending));
+                    case "CODE" -> {
+                        // Сортировка по вложенному полю "code" через метаклассы
+                        Expression<String> codePath = root.join(PaymentAnalyticEntity_.paymentObjects)
+                                                          .join(PaymentObjectEntity_.paymentObjectSsr)
+                                                          .join(PaymentObjectSsrEntity_.paymentSsrArticles)
+                                                          .get(PaymentSsrArticleEntity_.code);
+                        orders.add(createOrder(cb, codePath, descending));
+                    }
+                    default -> throw new IllegalArgumentException("Unknown sorting field: " + sortField);
+                }
+            }
+        } else {
+            // Сортировка по умолчанию
+            orders.add(cb.desc(root.get(PaymentAnalyticEntity_.date)));
+        }
+
+        query.orderBy(orders);
+        return null; // Возвращаем null, так как только сортировка требуется
+    }
+
+    private Order createOrder(CriteriaBuilder cb, Expression<?> expression, boolean descending) {
+        return descending ? cb.desc(expression) : cb.asc(expression);
     }
 }
