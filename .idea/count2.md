@@ -1,3 +1,85 @@
+public interface CountService<E, T> {
+    /**
+     * Подсчитывает количество элементов в группах на основе фильтрации.
+     *
+     * @param codes          Код типа группировки.
+     * @param specification  Спецификация фильтрации.
+     * @return Карта кодов на группы объектов и их количество.
+     */
+    Map<T, List<Pair<T, Long>>> getCountByGroups(RegistryCodes codes, Specification<E> specification);
+}
+
+@Service
+public class PaymentAnalyticCountService implements CountService<PaymentAnalyticEntity, String> {
+
+    private final PaymentAnalyticRepository repository;
+
+    public PaymentAnalyticCountService(PaymentAnalyticRepository repository) {
+        this.repository = repository;
+    }
+
+    @Override
+    public Map<String, List<Pair<String, Long>>> getCountByGroups(RegistryCodes codes, Specification<PaymentAnalyticEntity> specification) {
+        // Вызов репозитория для выполнения запроса группировки и подсчета
+        List<GroupCountDto> results = repository.countByGroup(specification);
+
+        // Преобразование результата в требуемую структуру
+        return results.stream()
+                .collect(Collectors.groupingBy(
+                        GroupCountDto::getGroupField,
+                        Collectors.mapping(
+                                dto -> Pair.of(dto.getGroupField(), dto.getCount()),
+                                Collectors.toList()
+                        )
+                ));
+    }
+}
+
+@Repository
+public interface PaymentAnalyticRepository extends JpaRepository<PaymentAnalyticEntity, UUID>, JpaSpecificationExecutor<PaymentAnalyticEntity> {
+
+    @Query("SELECT new com.example.dto.GroupCountDto(e.groupField, COUNT(e)) " +
+           "FROM PaymentAnalyticEntity e " +
+           "WHERE (:specification IS NULL OR :specification) " +
+           "GROUP BY e.groupField")
+    List<GroupCountDto> countByGroup(@Param("specification") Specification<PaymentAnalyticEntity> specification);
+}
+
+public class GroupCountDto {
+    private final String groupField;
+    private final Long count;
+
+    public GroupCountDto(String groupField, Long count) {
+        this.groupField = groupField;
+        this.count = count;
+    }
+
+    public String getGroupField() {
+        return groupField;
+    }
+
+    public Long getCount() {
+        return count;
+    }
+}
+
+@Service
+public class SomeApplicationService {
+
+    private final PaymentAnalyticCountService countService;
+
+    public SomeApplicationService(PaymentAnalyticCountService countService) {
+        this.countService = countService;
+    }
+
+    public Map<String, List<Pair<String, Long>>> processCounts(RegistryCodes codes, Specification<PaymentAnalyticEntity> specification) {
+        return countService.getCountByGroups(codes, specification);
+    }
+}
+
+
+
+
 Для расширения API разработчика я создам механизм подсчета элементов на стороне базы данных по группам любого уровня вложенности, используя расширенный `FieldMappingRegistry` и метод репозитория. Итоговая структура данных будет иметь тип `Map<RegistryCountEnum, List<Pair<E, Long>>>`. 
 
 Полный код решения, включая реализацию подсчета, будет соответствовать лучшим практикам и принципам SOLID.
