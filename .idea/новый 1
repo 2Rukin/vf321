@@ -1,3 +1,50 @@
+import jakarta.persistence.criteria.Join;
+import jakarta.persistence.criteria.JoinType;
+import jakarta.persistence.criteria.Root;
+
+public class JoinBuilder<T> {
+
+    private Root<T> root;
+
+    public JoinBuilder(Root<T> root) {
+        this.root = root;
+    }
+
+    private Join<?, ?> currentJoin;
+
+    /**
+     * Добавляет новый Join к цепочке
+     *
+     * @param attribute  имя атрибута для join
+     * @param joinType   тип join (INNER, LEFT, etc.)
+     * @param <R>        тип сущности, связанной с Join
+     * @return текущий JoinBuilder
+     */
+    public <R> JoinBuilder<T> add(String attribute, JoinType joinType) {
+        if (currentJoin == null) {
+            currentJoin = root.join(attribute, joinType);
+        } else {
+            currentJoin = currentJoin.join(attribute, joinType);
+        }
+        return this;
+    }
+
+    /**
+     * Завершает построение и возвращает последний созданный Join
+     *
+     * @param <R> Тип возвращаемого Join
+     * @return Последний Join
+     */
+    public <R> Join<T, R> build() {
+        if (currentJoin == null) {
+            throw new IllegalStateException("No joins have been added. Use add() method to add joins.");
+        }
+        return (Join<T, R>) currentJoin;
+    }
+}
+
+
+
 Ниже я опишу, как я понял задачу, а затем приведу полный, развернутый пример кода, не сокращая и не убавляя ничего. Я буду использовать предоставленные данные и классы, иерархию сущностей, `PFLoanFundsRqRegistryPaymentAnalyticSortingSpecification` и `PaymentAnalyticDto` (Dto предоставлен для понимания структуры, но само DTO не будет использоваться в спецификациях напрямую). Код будет адаптирован под требование: предоставить удобный API, позволяющий в сервисе вызывать методы типа `filterService.applyFilter(...)` или `filterService.applySorting(...)`, передавая:
 
 1. Класс сущности верхнего уровня (например `PaymentAnalyticEntity.class`).
